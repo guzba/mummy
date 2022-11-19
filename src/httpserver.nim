@@ -171,7 +171,7 @@ proc afterRecv(
     # 2) We received a Transfer-Encoding: chunked header
     # 3) Neither, so we assume a content length of 0
 
-    # This must be the last line, marking that headers have been parsed
+    # Mark that headers have been parsed, must end this block
     socketData.parseState.headersParsed = true
 
   # Headers have been parsed
