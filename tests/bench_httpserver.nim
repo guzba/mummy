@@ -2,7 +2,7 @@ import httpserver
 
 proc handler(request: HttpRequest, response: var HttpResponse) =
   response.statusCode = 200
-  response.body = "OK"
+  response.body = "{}"
 
 let server = newHttpServer(handler)
 server.serve(Port(8080))
