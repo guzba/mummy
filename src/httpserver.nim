@@ -12,6 +12,7 @@ type
     Http10, Http11
 
   HttpServer* = ref object
+    handler: proc(request: HttpRequest)
     maxHeadersLen, maxBodyLen: int
     socket: SocketHandle
     selector: Selector[SocketData]
@@ -45,11 +46,12 @@ template currentExceptionAsHttpServerError(): untyped =
   newException(HttpServerError, e.getStackTrace & e.msg, e)
 
 proc newHttpServer*(
-  hander: proc(request: HttpRequest),
+  handler: proc(request: HttpRequest),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
 ): HttpServer {.raises: [].} =
   result = HttpServer()
+  result.handler = handler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
 
