@@ -384,7 +384,7 @@ proc loopForever(
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
 
-      echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
       if User in readyKey.events:
         # This must be the responseReady event
