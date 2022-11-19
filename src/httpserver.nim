@@ -361,7 +361,7 @@ proc afterSend(
   clientSocket: SocketHandle,
   socketData: SocketData
 ): bool {.raises: [IOSelectorsException].} =
-  var outgoingResponse = socketData.outgoingResponses.peekFirst()
+  let outgoingResponse = socketData.outgoingResponses.peekFirst()
   if outgoingResponse.bytesSent == outgoingResponse.buffer.len:
     socketData.outgoingResponses.shrink(1)
     if outgoingResponse.closeConnection:
@@ -384,7 +384,7 @@ proc loopForever(
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
 
-      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+      echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
       if User in readyKey.events:
         # This must be the responseReady event
@@ -559,14 +559,13 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
     var encodedResponse: EncodedHttpResponse
     encodedResponse.clientSocket = clientSocket
+    encodedResponse.closeConnection = httpVersion == Http10 # Default behavior
 
-    if httpVersion == Http10:
+    # Override default behavior based on Connection header
+    if request.headers.headerContainsToken("Connection", "close"):
       encodedResponse.closeConnection = true
-    else:
-      encodedResponse.closeConnection = request.headers.headerContainsToken(
-        "Connection",
-        "close"
-      )
+    elif request.headers.headerContainsToken("Connection", "keep-alive"):
+      encodedResponse.closeConnection = false
 
     var response: HttpResponse
     try:
@@ -583,6 +582,22 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
       encodedResponse.closeConnection = response.headers.headerContainsToken(
         "Connection", "close"
       )
+
+
+
+
+
+    # TODO
+    response.headers["Content-Length"] = $response.body.len
+
+    if encodedResponse.closeConnection:
+      response.headers["Connection"] = "close"
+    else:
+      response.headers["Connection"] = "keep-alive"
+
+
+
+
 
     encodedResponse.buffer = response.encode()
 
