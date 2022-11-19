@@ -26,17 +26,18 @@ type
     requestQueue: Deque[(SocketHandle, HttpVersion, HttpRequest)]
     requestQueueLock: Lock
     requestQueueCond: Cond
-    responseQueue: Deque[WrappedHttpResponse]
+    responseQueue: Deque[EncodedHttpResponse]
     responseQueueLock: Lock
     running: bool
     workerThreads: seq[Thread[ptr HttpServerObj]]
 
   SocketData = ref object
-    recvBuffer, sendBuffer: string
-    bytesReceived, bytesSent: int
-    parseState: HttpRequestParseState
+    recvBuffer: string
+    bytesReceived: int
+    requestState: IncomingRequestState
+    outgoingResponses: Deque[OutgoingResponseState]
 
-  HttpRequestParseState = object
+  IncomingRequestState = object
     headersParsed, chunked: bool
     contentLength: int
     httpVersion: HttpVersion
@@ -44,22 +45,28 @@ type
     headers: seq[(string, string)]
     body: string
 
+  OutgoingResponseState = ref object
+    closeConnection: bool
+    buffer: string
+    bytesSent: int
+
+  HttpHeaders* = seq[(string, string)]
+
   HttpRequest* = ref object
     httpMethod*: string
     uri*: string
-    headers*: seq[(string, string)]
+    headers*: HttpHeaders
     body*: string
 
   HttpResponse* = object
     statusCode*: int
-    headers*: seq[(string, string)]
+    headers*: HttpHeaders
     body*: string
 
-  WrappedHttpResponse = ref object
+  EncodedHttpResponse = object
     clientSocket: SocketHandle
-    httpVersion: HttpVersion
-    requestHeaders: seq[(string, string)]
-    response: HttpResponse
+    closeConnection: bool
+    buffer: string
 
   HttpServerError* = object of CatchableError
 
@@ -67,23 +74,83 @@ template currentExceptionAsHttpServerError(): untyped =
   let e = getCurrentException()
   newException(HttpServerError, e.getStackTrace & e.msg, e)
 
+proc contains*(headers: var HttpHeaders, key: string): bool =
+  ## Checks if there is at least one header for the key. Not case sensitive.
+  for (k, v) in headers:
+    if cmpIgnoreCase(k, key) == 0:
+      return true
 
+# This version copies headers. It must be a separate proc (not | Headers) to
+# allow the non-copying version to be prioritized.
+proc contains*(headers: HttpHeaders, key: string): bool =
+  ## Checks if there is at least one header for the key. Not case sensitive.
+  for (k, v) in headers:
+    if cmpIgnoreCase(k, key) == 0:
+      return true
 
+proc `[]`*(headers: var HttpHeaders, key: string): string =
+  ## Returns the first header value the key. Not case sensitive.
+  for (k, v) in headers:
+    if cmpIgnoreCase(k, key) == 0:
+      return v
+
+# This version copies headers. It must be a separate proc (not | Headers) to
+# allow the non-copying version to be prioritized.
+proc `[]`*(headers: HttpHeaders, key: string): string =
+  ## Returns the first header value the key. Not case sensitive.
+  for (k, v) in headers:
+    if cmpIgnoreCase(k, key) == 0:
+      return v
+
+proc `[]=`*(headers: var HttpHeaders, key, value: string) =
+  ## Adds a new header if the key is not already present. If the key is already
+  ## present this overrides the first header value for the key.
+  ## Not case sensitive.
+  for i, (k, v) in headers:
+    if cmpIgnoreCase(k, key) == 0:
+      headers[i][1] = value
+      return
+  headers.add((key, value))
 
 proc encode(response: var HttpResponse): string =
-  result = "HTTP/1.1 " & $response.statusCode & "\r\n"
+  let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
 
+  var totalLen = statusLine.len
+  for (k, v) in response.headers:
+    # k + ": " + v + "\r\n"
+    totalLen += k.len + 2 + v.len + 2
+  # "\r\n" + response.body
+  totalLen += 2 + response.body.len
 
+  result = newStringOfCap(totalLen)
+  result.add statusLine
 
+  for (k, v) in response.headers:
+    result.add k & ": " & v & "\r\n"
+
+  result.add "\r\n"
+  result.add response.body
+
+  assert result.len == totalLen
+
+proc updateHandle2(
+  selector: Selector[SocketData],
+  socket: SocketHandle,
+  events: set[Event]
+) {.raises: [IOSelectorsException].} =
+  try:
+    selector.updateHandle(socket, events)
+  except ValueError: # Why ValueError?
+    raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
 proc popRequest(socketData: SocketData): HttpRequest {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = HttpRequest()
-  result.httpMethod = move socketData.parseState.httpMethod
-  result.uri = move socketData.parseState.uri
-  result.headers = move socketData.parseState.headers
-  result.body = move socketData.parseState.body
-  socketData.parseState = HttpRequestParseState()
+  result.httpMethod = move socketData.requestState.httpMethod
+  result.uri = move socketData.requestState.uri
+  result.headers = move socketData.requestState.headers
+  result.body = move socketData.requestState.body
+  socketData.requestState = IncomingRequestState()
 
 proc afterRecv(
   server: HttpServer,
@@ -91,7 +158,7 @@ proc afterRecv(
   socketData: SocketData
 ): bool {.raises: [].} =
   # Have we completed parsing the headers?
-  if not socketData.parseState.headersParsed:
+  if not socketData.requestState.headersParsed:
     # Not done with headers yet, look for the end of the headers
     let headersEnd = socketData.recvBuffer.find(
       "\r\n\r\n",
@@ -108,12 +175,17 @@ proc afterRecv(
       headerLines: seq[string]
       nextLineStart: int
     while true:
-      let lineEnd = socketData.recvBuffer.find("\r\n", nextLineStart, headersEnd)
+      let lineEnd = socketData.recvBuffer.find(
+        "\r\n",
+        nextLineStart,
+        headersEnd
+      )
       if lineEnd == -1:
-        headerLines.add(socketData.recvBuffer[nextLineStart ..< headersEnd])
+        var line = socketData.recvBuffer[nextLineStart ..< headersEnd].strip()
+        headerLines.add(move line)
         break
       else:
-        headerLines.add(socketData.recvBuffer[nextLineStart ..< lineEnd])
+        headerLines.add(socketData.recvBuffer[nextLineStart ..< lineEnd].strip())
         nextLineStart = lineEnd + 2
 
     let
@@ -122,46 +194,49 @@ proc afterRecv(
     if requestLineParts.len != 3:
       return true # Malformed request line, close the connection
 
-    socketData.parseState.httpMethod = requestLineParts[0]
-    socketData.parseState.uri = requestLineParts[1]
+    socketData.requestState.httpMethod = requestLineParts[0]
+    socketData.requestState.uri = requestLineParts[1]
 
     if requestLineParts[2] == "HTTP/1.0":
-      socketData.parseState.httpVersion = Http10
+      socketData.requestState.httpVersion = Http10
     elif requestLineParts[2] == "HTTP/1.1":
-      socketData.parseState.httpVersion = Http11
+      socketData.requestState.httpVersion = Http11
     else:
       return true # Unsupported HTTP version, close the connection
 
     for i in 1 ..< headerLines.len:
       let parts = headerLines[i].split(": ")
       if parts.len == 2:
-        socketData.parseState.headers.add((parts[0].toLowerAscii(), parts[1]))
+        socketData.requestState.headers.add((parts[0], parts[1]))
       else:
-        socketData.parseState.headers.add((headerLines[i], ""))
+        socketData.requestState.headers.add((headerLines[i], ""))
 
-    for (k, v) in socketData.parseState.headers:
-      if k == "transfer-encoding":
-        var parts = v.split(",")
-        for i in 0 ..< parts.len:
-          parts[i] = parts[i].strip().toLowerAscii()
-        if "chunked" in parts:
-          socketData.parseState.chunked = true
+    for (k, v) in socketData.requestState.headers:
+      if cmpIgnoreCase(k, "Transfer-Encoding") == 0:
+        if ',' in v:
+          var parts = v.split(",")
+          for part in parts.mitems:
+            if cmpIgnoreCase(part.strip(), "chunked") == 0:
+              socketData.requestState.chunked = true
+        else:
+          if cmpIgnoreCase(v, "chunked") == 0:
+            socketData.requestState.chunked = true
 
     # If this is a chunked request ignore any Content-Length headers
-    if not socketData.parseState.chunked:
+    if not socketData.requestState.chunked:
       var foundContentLength: bool
-      for (k, v) in socketData.parseState.headers:
-        if k == "content-length":
+      for (k, v) in socketData.requestState.headers:
+        if cmpIgnoreCase(k, "Content-Length") == 0:
           if foundContentLength:
             # This is a second Content-Length header, not valid
             return true # Close the connection
           foundContentLength = true
           try:
-            socketData.parseState.contentLength = parseInt(v.strip())
+            socketData.requestState.contentLength = parseInt(v)
           except:
             return true # Parsing Content-Length failed, close the connection
 
-      if socketData.parseState.contentLength < 0:
+      if socketData.requestState.contentLength < 0:
         return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
@@ -182,11 +257,11 @@ proc afterRecv(
     # 3) Neither, so we assume a content length of 0
 
     # Mark that headers have been parsed, must end this block
-    socketData.parseState.headersParsed = true
+    socketData.requestState.headersParsed = true
 
   # Headers have been parsed, now for the body
 
-  if socketData.parseState.chunked: # Chunked request
+  if socketData.requestState.chunked: # Chunked request
     # Process as many chunks as we have
     while true:
       if socketData.bytesReceived < 3:
@@ -214,7 +289,7 @@ proc afterRecv(
       except:
         return true # Parsing chunk length failed, close the connection
 
-      if socketData.parseState.contentLength + chunkLen > server.maxBodyLen:
+      if socketData.requestState.contentLength + chunkLen > server.maxBodyLen:
         return true # Body is too large, close the connection
 
       let chunkStart = chunkLenEnd + 2
@@ -222,18 +297,18 @@ proc afterRecv(
         return false # Need to receive more bytes
 
       # Make room in the body buffer for this chunk
-      let newContentLength = socketData.parseState.contentLength + chunkLen
-      if socketData.parseState.body.len < newContentLength:
-        let newLen = max(socketData.parseState.body.len * 2, newContentLength)
-        socketData.parseState.body.setLen(newLen)
+      let newContentLength = socketData.requestState.contentLength + chunkLen
+      if socketData.requestState.body.len < newContentLength:
+        let newLen = max(socketData.requestState.body.len * 2, newContentLength)
+        socketData.requestState.body.setLen(newLen)
 
       copyMem(
-        socketData.parseState.body[socketData.parseState.contentLength].addr,
+        socketData.requestState.body[socketData.requestState.contentLength].addr,
         socketData.recvBuffer[chunkStart].addr,
         chunkLen
       )
 
-      socketData.parseState.contentLength += chunkLen
+      socketData.requestState.contentLength += chunkLen
 
       # Remove this chunk from the receive buffer
       let
@@ -250,35 +325,35 @@ proc afterRecv(
         var request = socketData.popRequest()
         acquire(server.requestQueueLock)
         server.requestQueue.addLast(
-          (clientSocket, socketData.parseState.httpVersion, move request)
+          (clientSocket, socketData.requestState.httpVersion, move request)
         )
         release(server.requestQueueLock)
         signal(server.requestQueueCond)
         return false
   else:
-    if socketData.parseState.contentLength > server.maxBodyLen:
+    if socketData.requestState.contentLength > server.maxBodyLen:
       return true # Body is too large, close the connection
 
-    if socketData.bytesReceived < socketData.parseState.contentLength:
+    if socketData.bytesReceived < socketData.requestState.contentLength:
       return false # Need to receive more bytes
 
     # We have the entire request body
 
     # If this request has a body, fill it
-    if socketData.parseState.contentLength > 0:
-      socketData.parseState.body.setLen(socketData.parseState.contentLength)
+    if socketData.requestState.contentLength > 0:
+      socketData.requestState.body.setLen(socketData.requestState.contentLength)
       copyMem(
-        socketData.parseState.body[0].addr,
+        socketData.requestState.body[0].addr,
         socketData.recvBuffer[0].addr,
-        socketData.parseState.contentLength
+        socketData.requestState.contentLength
       )
 
     # Remove this request from the receive buffer
     let bytesRemaining =
-      socketData.bytesReceived - socketData.parseState.contentLength
+      socketData.bytesReceived - socketData.requestState.contentLength
     copyMem(
       socketData.recvBuffer[0].addr,
-      socketData.recvBuffer[socketData.parseState.contentLength].addr,
+      socketData.recvBuffer[socketData.requestState.contentLength].addr,
       bytesRemaining
     )
     socketData.bytesReceived = bytesRemaining
@@ -286,7 +361,7 @@ proc afterRecv(
     var request = socketData.popRequest()
     acquire(server.requestQueueLock)
     server.requestQueue.addLast(
-      (clientSocket, socketData.parseState.httpVersion, move request)
+      (clientSocket, socketData.requestState.httpVersion, move request)
     )
     release(server.requestQueueLock)
     signal(server.requestQueueCond)
@@ -295,10 +370,14 @@ proc afterSend(
   server: HttpServer,
   clientSocket: SocketHandle,
   socketData: SocketData
-): bool {.raises: [].} =
-  if socketData.bytesSent == socketData.sendBuffer.len:
-    # TODO: Connection, Keep-Alive headers
-    return true # Done sending, close the connection
+): bool {.raises: [IOSelectorsException].} =
+  var outgoingResponse = socketData.outgoingResponses.peekFirst()
+  if outgoingResponse.bytesSent == outgoingResponse.buffer.len:
+    socketData.outgoingResponses.shrink(1)
+    if outgoingResponse.closeConnection:
+      return true
+  if socketData.outgoingResponses.len == 0:
+    server.selector.updateHandle2(clientSocket, {Read})
 
 proc loopForever(
   server: HttpServer,
@@ -315,24 +394,27 @@ proc loopForever(
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
 
-      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+      echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
       if User in readyKey.events:
         # This must be the responseReady event
         acquire(server.responseQueueLock)
-        let wrapped = server.responseQueue.popFirst()
+        var encodedResponse = server.responseQueue.popFirst()
         release(server.responseQueueLock)
-        if wrapped.clientSocket in server.selector:
-          let socketData = server.selector.getData(wrapped.clientSocket)
 
-          # Turn this HttpResponse into bytes
+        if encodedResponse.clientSocket in server.selector:
+          let socketData = server.selector.getData(encodedResponse.clientSocket)
 
-          socketData.sendBuffer = "HTTP/1.1 200\r\n\r\n"
+          var outgoingResponse = OutgoingResponseState()
+          outgoingResponse.closeConnection = encodedResponse.closeConnection
+          outgoingResponse.buffer = move encodedResponse.buffer
 
-          try:
-            server.selector.updateHandle(wrapped.clientSocket, {Read, Write})
-          except ValueError: # Why ValueError?
-            raise newException(IOSelectorsException, getCurrentExceptionMsg())
+          socketData.outgoingResponses.addLast(move outgoingResponse)
+
+          server.selector.updateHandle2(
+            encodedResponse.clientSocket,
+            {Read, Write}
+          )
         continue
 
       if readyKey.fd == server.socket.int:
@@ -372,13 +454,15 @@ proc loopForever(
             continue
 
         if Write in readyKey.events:
-          let bytesSent = readyKey.fd.SocketHandle.send(
-            socketData.sendBuffer[socketData.bytesSent].addr,
-            socketData.sendBuffer.len - socketData.bytesSent,
-            0
-          )
+          let
+            outgoingResponse = socketData.outgoingResponses.peekFirst()
+            bytesSent = readyKey.fd.SocketHandle.send(
+              outgoingResponse.buffer[outgoingResponse.bytesSent].addr,
+              outgoingResponse.buffer.len - outgoingResponse.bytesSent,
+              0
+            )
           if bytesSent > 0:
-            socketData.bytesSent += bytesSent
+            outgoingResponse.bytesSent += bytesSent
             sentTo.add(readyKey.fd.SocketHandle)
           else:
             needClosing.add(readyKey.fd.SocketHandle)
@@ -411,9 +495,6 @@ proc loopForever(
         raise cast[ref IOSelectorsException](getCurrentException())
       clientSocket.close()
       server.clientSockets.del(server.clientSockets.find(clientSocket))
-
-    # if needClosing.len > 0:
-    #   echo server.clientSockets.len
 
 proc serve*(
   server: HttpServer,
@@ -486,30 +567,44 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
     release(server.requestQueueLock)
 
-    var wrapped = WrappedHttpResponse()
-    wrapped.clientSocket = clientSocket
-    wrapped.httpVersion = httpVersion
-    # Because request headers could be modified in the handler, copy them
-    wrapped.requestHeaders = request.headers
+    var encodedResponse: EncodedHttpResponse
+    encodedResponse.clientSocket = clientSocket
+
+    if httpVersion == Http10:
+      encodedResponse.closeConnection = true
+    else:
+      let connection = request.headers["connection"]
+      if connection != "":
+        if ',' in connection:
+          var parts = connection.split(",")
+          for part in parts.mitems:
+            if cmpIgnoreCase(part.strip(), "close") == 0:
+              encodedResponse.closeConnection = true
+        else:
+          if cmpIgnoreCase(connection, "close") == 0:
+            encodedResponse.closeConnection = true
+
+
 
     var response: HttpResponse
-
     try:
       {.gcsafe.}: # lol
         server.handler(move request, response)
     except:
       echo "BAD ", getCurrentExceptionMsg()
 
-    wrapped.response = move response
+    encodedResponse.buffer = response.encode()
 
     acquire(server.responseQueueLock)
-    server.responseQueue.addLast(move wrapped)
+    server.responseQueue.addLast(move encodedResponse)
     release(server.responseQueueLock)
 
     try:
       server.responseReady.trigger()
     except:
       echo "UHH????", getCurrentExceptionMsg()
+
+
 
 proc newHttpServer*(
   handler: HttpHandler,
