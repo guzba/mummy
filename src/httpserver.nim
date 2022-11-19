@@ -532,4 +532,8 @@ proc newHttpServer*(
     deinitLock(result.requestQueueLock)
     deinitCond(result.requestQueueCond)
     deinitLock(result.responseQueueLock)
+    try:
+      result.responseReady.close()
+    except:
+      discard # Ignore
     raise currentExceptionAsHttpServerError()
