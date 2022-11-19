@@ -5,7 +5,7 @@ export Port
 
 const
   listenBacklogLen = 128
-  maxEventsPerSelectLoop = 16
+  maxEventsPerSelectLoop = 32
   initialSocketBufferLen = (8 * 1024) - 9 # 8 byte cap field + null terminator
 
 type
@@ -80,23 +80,7 @@ proc contains*(headers: var HttpHeaders, key: string): bool =
     if cmpIgnoreCase(k, key) == 0:
       return true
 
-# This version copies headers. It must be a separate proc (not | Headers) to
-# allow the non-copying version to be prioritized.
-proc contains*(headers: HttpHeaders, key: string): bool =
-  ## Checks if there is at least one header for the key. Not case sensitive.
-  for (k, v) in headers:
-    if cmpIgnoreCase(k, key) == 0:
-      return true
-
 proc `[]`*(headers: var HttpHeaders, key: string): string =
-  ## Returns the first header value the key. Not case sensitive.
-  for (k, v) in headers:
-    if cmpIgnoreCase(k, key) == 0:
-      return v
-
-# This version copies headers. It must be a separate proc (not | Headers) to
-# allow the non-copying version to be prioritized.
-proc `[]`*(headers: HttpHeaders, key: string): string =
   ## Returns the first header value the key. Not case sensitive.
   for (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
@@ -111,6 +95,18 @@ proc `[]=`*(headers: var HttpHeaders, key, value: string) =
       headers[i][1] = value
       return
   headers.add((key, value))
+
+proc headerContainsToken*(headers: var HttpHeaders, key, token: string): bool =
+  for (k, v) in headers:
+    if cmpIgnoreCase(k, key) == 0:
+      if ',' in v:
+        var parts = v.split(",")
+        for part in parts.mitems:
+          if cmpIgnoreCase(part.strip(), token) == 0:
+            return true
+      else:
+        if cmpIgnoreCase(v, token) == 0:
+          return true
 
 proc encode(response: var HttpResponse): string =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
@@ -211,16 +207,9 @@ proc afterRecv(
       else:
         socketData.requestState.headers.add((headerLines[i], ""))
 
-    for (k, v) in socketData.requestState.headers:
-      if cmpIgnoreCase(k, "Transfer-Encoding") == 0:
-        if ',' in v:
-          var parts = v.split(",")
-          for part in parts.mitems:
-            if cmpIgnoreCase(part.strip(), "chunked") == 0:
-              socketData.requestState.chunked = true
-        else:
-          if cmpIgnoreCase(v, "chunked") == 0:
-            socketData.requestState.chunked = true
+    let chunked = socketData.requestState.headers.headerContainsToken(
+      "Transfer-Encoding", "chunked"
+    )
 
     # If this is a chunked request ignore any Content-Length headers
     if not socketData.requestState.chunked:
@@ -394,7 +383,7 @@ proc loopForever(
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
 
-      echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
       if User in readyKey.events:
         # This must be the responseReady event
@@ -573,25 +562,26 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     if httpVersion == Http10:
       encodedResponse.closeConnection = true
     else:
-      let connection = request.headers["connection"]
-      if connection != "":
-        if ',' in connection:
-          var parts = connection.split(",")
-          for part in parts.mitems:
-            if cmpIgnoreCase(part.strip(), "close") == 0:
-              encodedResponse.closeConnection = true
-        else:
-          if cmpIgnoreCase(connection, "close") == 0:
-            encodedResponse.closeConnection = true
-
-
+      encodedResponse.closeConnection = request.headers.headerContainsToken(
+        "Connection",
+        "close"
+      )
 
     var response: HttpResponse
     try:
       {.gcsafe.}: # lol
-        server.handler(move request, response)
+        server.handler(request, response)
     except:
       echo "BAD ", getCurrentExceptionMsg()
+
+    # Request may have been modified by the handler, do not look at it
+    request = nil
+
+    # If we are not already going to close the connection, check if we should
+    if not encodedResponse.closeConnection:
+      encodedResponse.closeConnection = response.headers.headerContainsToken(
+        "Connection", "close"
+      )
 
     encodedResponse.buffer = response.encode()
 
