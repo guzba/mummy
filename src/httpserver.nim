@@ -207,9 +207,10 @@ proc afterRecv(
       else:
         socketData.requestState.headers.add((headerLines[i], ""))
 
-    let chunked = socketData.requestState.headers.headerContainsToken(
-      "Transfer-Encoding", "chunked"
-    )
+    socketData.requestState.chunked =
+      socketData.requestState.headers.headerContainsToken(
+        "Transfer-Encoding", "chunked"
+      )
 
     # If this is a chunked request ignore any Content-Length headers
     if not socketData.requestState.chunked:
