@@ -174,7 +174,7 @@ proc afterRecv(
     # Mark that headers have been parsed, must end this block
     socketData.parseState.headersParsed = true
 
-  # Headers have been parsed
+  # Headers have been parsed, now for the body
 
   if socketData.parseState.chunked: # Chunked request
     # Process as many chunks as we have
