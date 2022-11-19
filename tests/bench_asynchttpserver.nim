@@ -1,4 +1,4 @@
-import std/asynchttpserver, std/asyncdispatch
+import std/asyncdispatch, std/asynchttpserver
 
 proc main {.async.} =
   var server = newAsyncHttpServer()

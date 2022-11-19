@@ -1,4 +1,5 @@
-import std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os, std/selectors, std/strutils, std/parseutils
+import std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
+    std/parseutils, std/selectors, std/strutils
 
 export Port
 
