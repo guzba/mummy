@@ -6,7 +6,7 @@ export Port
 const
   listenBacklogLen = 128
   maxEventsPerSelectLoop = 32
-  initialSocketBufferLen = (8 * 1024) - 9 # 8 byte cap field + null terminator
+  initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 type
   HttpVersion* = enum
@@ -96,7 +96,7 @@ proc `[]=`*(headers: var HttpHeaders, key, value: string) =
       return
   headers.add((key, value))
 
-proc headerContainsToken*(headers: var HttpHeaders, key, token: string): bool =
+proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
       if ',' in v:
@@ -417,14 +417,14 @@ proc loopForever(
           server.clientSockets.add(clientSocket)
 
           let socketData = SocketData()
-          socketData.recvBuffer.setLen(initialSocketBufferLen)
+          socketData.recvBuffer.setLen(initialRecvBufferLen)
           server.selector.registerHandle(clientSocket, {Read}, socketData)
       else:
-        let socketData = server.selector.getData(readyKey.fd)
-
         if Error in readyKey.events:
           needClosing.add(readyKey.fd.SocketHandle)
           continue
+
+        let socketData = server.selector.getData(readyKey.fd)
 
         if Read in readyKey.events:
           # Expand the buffer if it is full
