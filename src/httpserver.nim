@@ -1,4 +1,4 @@
-import std/nativesockets, std/os, std/selectors, std/strutils, std/parseutils
+import std/cpuinfo, std/nativesockets, std/os, std/selectors, std/strutils, std/parseutils
 
 export Port
 
@@ -47,8 +47,9 @@ template currentExceptionAsHttpServerError(): untyped =
 
 proc newHttpServer*(
   handler: proc(request: HttpRequest),
+  workerThreads = min(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
-  maxBodyLen = 1024 * 1024 # 1 MB
+  maxBodyLen = 10 * 1024 # 1 MB
 ): HttpServer {.raises: [].} =
   result = HttpServer()
   result.handler = handler
@@ -195,6 +196,9 @@ proc afterRecv(
       except:
         return true # Parsing chunk length failed, close the connection
 
+      if socketData.parseState.contentLength + chunkLen > server.maxBodyLen:
+        return true # Body is too large, close the connection
+
       let chunkStart = chunkLenEnd + 2
       if socketData.bytesReceived < chunkStart + chunkLen + 2:
         return false # Need to receive more bytes
@@ -229,6 +233,9 @@ proc afterRecv(
         echo "GOT FULL CHUNKED REQUEST"
         return false
   else:
+    if socketData.parseState.contentLength > server.maxBodyLen:
+      return true # Body is too large, close the connection
+
     if socketData.bytesReceived < socketData.parseState.contentLength:
       return false # Need to receive more bytes
 
