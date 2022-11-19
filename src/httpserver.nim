@@ -51,7 +51,7 @@ template currentExceptionAsHttpServerError(): untyped =
 
 proc newHttpServer*(
   handler: HttpHandler,
-  workerThreads = min(countProcessors() - 1, 1),
+  workerThreads = max(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
 ): HttpServer {.raises: [].} =
