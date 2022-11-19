@@ -49,7 +49,7 @@ proc newHttpServer*(
   handler: proc(request: HttpRequest),
   workerThreads = min(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
-  maxBodyLen = 10 * 1024 # 1 MB
+  maxBodyLen = 1024 * 1024 # 1 MB
 ): HttpServer {.raises: [].} =
   result = HttpServer()
   result.handler = handler
