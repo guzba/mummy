@@ -1,4 +1,4 @@
-import std/cpuinfo, std/nativesockets, std/os, std/selectors, std/strutils, std/parseutils
+import std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os, std/selectors, std/strutils, std/parseutils
 
 export Port
 
@@ -11,16 +11,24 @@ type
   HttpVersion* = enum
     Http10, Http11
 
-  HttpHandler* = proc(request: HttpRequest): HttpResponse
+  HttpHandler* = proc(request: HttpRequest, response: var HttpResponse)
 
-  HttpServer* = ref object
+  HttpServer* = ref HttpServerObj
+
+  HttpServerObj = object
     handler: HttpHandler
     maxHeadersLen, maxBodyLen: int
     socket: SocketHandle
     selector: Selector[SocketData]
+    responseReady: SelectEvent
     clientSockets: seq[SocketHandle]
-
-  HttpResponse* = ref object
+    requestQueue: Deque[(SocketHandle, HttpVersion, HttpRequest)]
+    requestQueueLock: Lock
+    requestQueueCond: Cond
+    responseQueue: Deque[WrappedHttpResponse]
+    responseQueueLock: Lock
+    running: bool
+    workerThreads: seq[Thread[ptr HttpServerObj]]
 
   SocketData = ref object
     recvBuffer, sendBuffer: string
@@ -36,12 +44,21 @@ type
     body: string
 
   HttpRequest* = ref object
-    clientSocket: SocketHandle
-    httpVersion: HttpVersion
     httpMethod*: string
     uri*: string
     headers*: seq[(string, string)]
     body*: string
+
+  HttpResponse* = object
+    statusCode*: int
+    headers*: seq[(string, string)]
+    body*: string
+
+  WrappedHttpResponse = ref object
+    clientSocket: SocketHandle
+    httpVersion: HttpVersion
+    requestHeaders: seq[(string, string)]
+    response: HttpResponse
 
   HttpServerError* = object of CatchableError
 
@@ -49,25 +66,9 @@ template currentExceptionAsHttpServerError(): untyped =
   let e = getCurrentException()
   newException(HttpServerError, e.getStackTrace & e.msg, e)
 
-proc newHttpServer*(
-  handler: HttpHandler,
-  workerThreads = max(countProcessors() - 1, 1),
-  maxHeadersLen = 8 * 1024, # 8 KB
-  maxBodyLen = 1024 * 1024 # 1 MB
-): HttpServer {.raises: [].} =
-  result = HttpServer()
-  result.handler = handler
-  result.maxHeadersLen = maxHeadersLen
-  result.maxBodyLen = maxBodyLen
-
-proc popRequest(
-  clientSocket: SocketHandle,
-  socketData: SocketData
-): HttpRequest {.raises: [].} =
+proc popRequest(socketData: SocketData): HttpRequest {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = HttpRequest()
-  result.clientSocket = clientSocket
-  result.httpVersion = socketData.parseState.httpVersion
   result.httpMethod = move socketData.parseState.httpMethod
   result.uri = move socketData.parseState.uri
   result.headers = move socketData.parseState.headers
@@ -236,8 +237,13 @@ proc afterRecv(
       socketData.bytesReceived = bytesRemaining
 
       if chunkLen == 0:
-        let request = clientSocket.popRequest(socketData)
-        echo "GOT FULL CHUNKED REQUEST"
+        var request = socketData.popRequest()
+        acquire(server.requestQueueLock)
+        server.requestQueue.addLast(
+          (clientSocket, socketData.parseState.httpVersion, move request)
+        )
+        release(server.requestQueueLock)
+        signal(server.requestQueueCond)
         return false
   else:
     if socketData.parseState.contentLength > server.maxBodyLen:
@@ -267,8 +273,13 @@ proc afterRecv(
     )
     socketData.bytesReceived = bytesRemaining
 
-    let request = clientSocket.popRequest(socketData)
-    echo "GOT ENTIRE REQUEST"
+    var request = socketData.popRequest()
+    acquire(server.requestQueueLock)
+    server.requestQueue.addLast(
+      (clientSocket, socketData.parseState.httpVersion, move request)
+    )
+    release(server.requestQueueLock)
+    signal(server.requestQueueCond)
 
 proc afterSend(
   server: HttpServer,
@@ -293,21 +304,41 @@ proc loopForever(
     let readyCount = server.selector.selectInto(-1, readyKeys)
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
+
+      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+
+      if User in readyKey.events:
+        # This must be the responseReady event
+        acquire(server.responseQueueLock)
+        let wrapped = server.responseQueue.popFirst()
+        release(server.responseQueueLock)
+        if wrapped.clientSocket in server.selector:
+          let socketData = server.selector.getData(wrapped.clientSocket)
+
+          # Turn this HttpResponse into bytes
+
+          socketData.sendBuffer = "HTTP/1.1 200\r\n\r\n"
+
+          try:
+            server.selector.updateHandle(wrapped.clientSocket, {Read, Write})
+          except ValueError: # Why ValueError?
+            raise newException(IOSelectorsException, getCurrentExceptionMsg())
+        continue
+
       if readyKey.fd == server.socket.int:
-        let (clientSocket, _) = server.socket.accept()
-        if clientSocket == osInvalidSocket:
-          continue
+        if Read in readyKey.events:
+          let (clientSocket, _) = server.socket.accept()
+          if clientSocket == osInvalidSocket:
+            continue
 
-        clientSocket.setBlocking(false)
-        server.clientSockets.add(clientSocket)
+          clientSocket.setBlocking(false)
+          server.clientSockets.add(clientSocket)
 
-        let socketData = SocketData()
-        socketData.recvBuffer.setLen(initialSocketBufferLen)
-        server.selector.registerHandle(clientSocket, {Read}, socketData)
+          let socketData = SocketData()
+          socketData.recvBuffer.setLen(initialSocketBufferLen)
+          server.selector.registerHandle(clientSocket, {Read}, socketData)
       else:
         let socketData = server.selector.getData(readyKey.fd)
-
-        echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
         if Error in readyKey.events:
           needClosing.add(readyKey.fd.SocketHandle)
@@ -371,6 +402,9 @@ proc loopForever(
       clientSocket.close()
       server.clientSockets.del(server.clientSockets.find(clientSocket))
 
+    # if needClosing.len > 0:
+    #   echo server.clientSockets.len
+
 proc serve*(
   server: HttpServer,
   port: Port
@@ -386,7 +420,7 @@ proc serve*(
     server.socket.setBlocking(false)
     server.socket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
 
-    let addrInfo = getAddrInfo(
+    let ai = getAddrInfo(
       "0.0.0.0",
       Port(8080),
       AF_INET,
@@ -394,15 +428,16 @@ proc serve*(
       IPPROTO_TCP
     )
     try:
-      if bindAddr(server.socket, addrInfo.ai_addr, addrInfo.ai_addrlen.SockLen) < 0:
+      if bindAddr(server.socket, ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
         raiseOSError(osLastError())
     finally:
-      freeAddrInfo(addrInfo)
+      freeAddrInfo(ai)
 
     if server.socket.listen(listenBacklogLen) < 0:
       raiseOSError(osLastError())
 
     server.selector = newSelector[SocketData]()
+    server.selector.registerEvent(server.responseReady, nil)
     server.selector.registerHandle(server.socket, {Read}, nil)
   except:
     if server.selector != nil:
@@ -424,4 +459,77 @@ proc serve*(
     for clientSocket in server.clientSockets:
       clientSocket.close()
     server.socket.close()
+    raise currentExceptionAsHttpServerError()
+
+proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
+  while true:
+    acquire(server.requestQueueLock)
+
+    while server.requestQueue.len == 0 and server.running:
+      wait(server.requestQueueCond, server.requestQueueLock)
+
+    if not server.running:
+      release(server.requestQueueLock)
+      return
+
+    var (clientSocket, httpVersion, request) = server.requestQueue.popFirst()
+
+    release(server.requestQueueLock)
+
+    var wrapped = WrappedHttpResponse()
+    wrapped.clientSocket = clientSocket
+    wrapped.httpVersion = httpVersion
+    # Because request headers could be modified in the handler, copy them
+    wrapped.requestHeaders = request.headers
+
+    var response: HttpResponse
+
+    try:
+      {.gcsafe.}: # lol
+        server.handler(move request, response)
+    except:
+      echo "BAD ", getCurrentExceptionMsg()
+
+    wrapped.response = move response
+
+    acquire(server.responseQueueLock)
+    server.responseQueue.addLast(move wrapped)
+    release(server.responseQueueLock)
+
+    try:
+      server.responseReady.trigger()
+    except:
+      echo "UHH????", getCurrentExceptionMsg()
+
+proc newHttpServer*(
+  handler: HttpHandler,
+  workerThreadCount = max(countProcessors() - 1, 1),
+  maxHeadersLen = 8 * 1024, # 8 KB
+  maxBodyLen = 1024 * 1024 # 1 MB
+): HttpServer {.raises: [HttpServerError].} =
+  result = HttpServer()
+  result.handler = handler
+  result.maxHeadersLen = maxHeadersLen
+  result.maxBodyLen = maxBodyLen
+  result.running = true
+  initLock(result.requestQueueLock)
+  initCond(result.requestQueueCond)
+  initLock(result.responseQueueLock)
+  result.workerThreads.setLen(workerThreadCount)
+
+  try:
+    result.responseReady = newSelectEvent()
+
+    # Start the worker threads
+    for workerThead in result.workerThreads.mitems:
+      createThread(workerThead, workerProc, cast[ptr HttpServerObj](result))
+  except:
+    acquire(result.requestQueueLock)
+    result.running = false
+    release(result.requestQueueLock)
+    broadcast(result.requestQueueCond)
+    joinThreads(result.workerThreads)
+    deinitLock(result.requestQueueLock)
+    deinitCond(result.requestQueueCond)
+    deinitLock(result.responseQueueLock)
     raise currentExceptionAsHttpServerError()
