@@ -503,7 +503,7 @@ proc serve*(
 
     let ai = getAddrInfo(
       "0.0.0.0",
-      Port(8080),
+      port,
       AF_INET,
       SOCK_STREAM,
       IPPROTO_TCP
@@ -583,21 +583,12 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
         "Connection", "close"
       )
 
-
-
-
-
-    # TODO
     response.headers["Content-Length"] = $response.body.len
 
     if encodedResponse.closeConnection:
       response.headers["Connection"] = "close"
     else:
       response.headers["Connection"] = "keep-alive"
-
-
-
-
 
     encodedResponse.buffer = response.encode()
 
