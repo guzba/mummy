@@ -66,6 +66,15 @@ template currentExceptionAsHttpServerError(): untyped =
   let e = getCurrentException()
   newException(HttpServerError, e.getStackTrace & e.msg, e)
 
+
+
+
+proc encode(response: var HttpResponse): string =
+  result = "HTTP/1.1 " & $response.statusCode & "\r\n"
+
+
+
+
 proc popRequest(socketData: SocketData): HttpRequest {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = HttpRequest()
