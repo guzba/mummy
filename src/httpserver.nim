@@ -11,12 +11,16 @@ type
   HttpVersion* = enum
     Http10, Http11
 
+  HttpHandler* = proc(request: HttpRequest): HttpResponse
+
   HttpServer* = ref object
-    handler: proc(request: HttpRequest)
+    handler: HttpHandler
     maxHeadersLen, maxBodyLen: int
     socket: SocketHandle
     selector: Selector[SocketData]
     clientSockets: seq[SocketHandle]
+
+  HttpResponse* = ref object
 
   SocketData = ref object
     recvBuffer, sendBuffer: string
@@ -46,7 +50,7 @@ template currentExceptionAsHttpServerError(): untyped =
   newException(HttpServerError, e.getStackTrace & e.msg, e)
 
 proc newHttpServer*(
-  handler: proc(request: HttpRequest),
+  handler: HttpHandler,
   workerThreads = min(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
@@ -145,6 +149,9 @@ proc afterRecv(
             socketData.parseState.contentLength = parseInt(v.strip())
           except:
             return true # Parsing Content-Length failed, close the connection
+
+      if socketData.parseState.contentLength < 0:
+        return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
     let bodyStart = headersEnd + 4
@@ -269,7 +276,7 @@ proc afterSend(
   socketData: SocketData
 ): bool {.raises: [].} =
   if socketData.bytesSent == socketData.sendBuffer.len:
-    # TODO: Keep-Alive
+    # TODO: Connection, Keep-Alive headers
     return true # Done sending, close the connection
 
 proc loopForever(

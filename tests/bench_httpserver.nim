@@ -1,6 +1,6 @@
 import httpserver
 
-proc handler*(request: HttpRequest) =
+proc handler(request: HttpRequest): HttpResponse =
   discard
 
 let server = newHttpServer(handler)
