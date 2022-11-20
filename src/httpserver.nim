@@ -272,6 +272,7 @@ proc sendCloseMsg(
   outgoingPayload.buffer = encodeFrame(0x8, "")
   outgoingPayload.closeConnection = closeConnection
   socketState.outgoingPayloads.addLast(outgoingPayload)
+  socketState.closeFrameSent = true
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc afterRecvWebSocket(
