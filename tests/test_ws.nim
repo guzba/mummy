@@ -14,10 +14,8 @@ createThread(serverThread, serverProc)
 sleep(1000)
 
 let websocket = waitFor newWebSocket("ws://127.0.0.1:8081")
-echo "SENDING"
+echo "C2S"
 waitFor websocket.ping()
-echo "AFTER PING"
-waitFor websocket.send("Test message")
-echo "AFTER SEND 2"
-
+echo waitFor websocket.receivePacket()
+echo "!!"
 waitFor sleepAsync(1000)

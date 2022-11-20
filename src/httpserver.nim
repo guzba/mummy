@@ -43,7 +43,7 @@ type
     requestState: IncomingRequestState
     msgState: IncomingWsMsgState
     outgoingPayloads: Deque[OutgoingPayloadState]
-    upgradedToWebSocket: bool
+    upgradedToWebSocket, closeFrameSent: bool
 
   IncomingRequestState = object
     headersParsed, chunked: bool
@@ -156,8 +156,8 @@ proc updateHandle2(
 
 proc send*(
   websocket: WebSocket,
-  kind: WsMsgKind,
-  data: string
+  data: string,
+  kind = TextMsg,
 ) {.raises: [], gcsafe.} =
   discard
 
@@ -206,6 +206,40 @@ proc websocketUpgrade*(
   result.server = request.server
   result.clientSocket = request.clientSocket
 
+proc encodeFrame(opcode: uint8, data: string): string {.raises: [], gcsafe.} =
+  assert (opcode and 0b11110000) == 0
+
+  var frameLen = 2
+
+  if data.len <= 125:
+    discard
+  elif data.len <= uint16.high.int:
+    frameLen += 2
+  else:
+    frameLen += 8
+
+  frameLen += data.len
+
+  result = newStringOfCap(frameLen)
+  result.add cast[char](0b10000000 or opcode)
+
+  if data.len <= 125:
+    result.add data.len.char
+  elif data.len <= uint16.high.int:
+    result.add 126.char
+    var l = cast[uint16](data.len).htons
+    result.setLen(result.len + 2)
+    copyMem(result[result.len - 2].addr, l.addr, 2)
+  else:
+    result.add 127.char
+    var l = cast[uint32](data.len).htonl
+    result.setLen(result.len + 8)
+    copyMem(result[result.len - 4].addr, l.addr, 4)
+
+  result.add data # This may be an expensive copy
+
+  assert result.len == frameLen
+
 # proc popWsMsg(
 #   server: HttpServer,
 #   clientSocket: SocketHandle,
@@ -223,23 +257,22 @@ proc sendPongMsg(
   clientSocket: SocketHandle,
   socketState: SocketState
 ) {.raises: [IOSelectorsException].} =
-
-  echo "HERE"
-
-  discard
-
-  # var outgoingPayload = OutgoingPayloadState()
-
-  # socketState.outgoingPayloads.addLast(move outgoingPayload)
-
-  # server.selector.updateHandle2(clientSocket, {Read, Write})
+  let outgoingPayload = OutgoingPayloadState()
+  outgoingPayload.buffer = encodeFrame(0xA, "")
+  socketState.outgoingPayloads.addLast(outgoingPayload)
+  server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc sendCloseMsg(
   server: HttpServer,
   clientSocket: SocketHandle,
-  socketState: SocketState
+  socketState: SocketState,
+  closeConnection: bool
 ) {.raises: [IOSelectorsException].} =
-  discard
+  let outgoingPayload = OutgoingPayloadState()
+  outgoingPayload.buffer = encodeFrame(0x8, "")
+  outgoingPayload.closeConnection = closeConnection
+  socketState.outgoingPayloads.addLast(outgoingPayload)
+  server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc afterRecvWebSocket(
   server: HttpServer,
@@ -359,8 +392,10 @@ proc afterRecvWebSocket(
         discard
       of 0x8: # Close
         # If we already sent a close, just close the connection
-        # Otherwise send a Close in response
-        server.sendCloseMsg(clientSocket, socketState)
+        if socketState.closeFrameSent:
+          return true # Close the connection
+        # Otherwise send a Close in response then close the connection
+        server.sendCloseMsg(clientSocket, socketState, true)
       of 0x9: # Ping
         server.sendPongMsg(clientSocket, socketState)
       of 0xA: # Pong
@@ -370,7 +405,7 @@ proc afterRecvWebSocket(
         # TODO: log?
         discard
 
-proc encode(response: var HttpResponse): string =
+proc encode(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
 
   var totalLen = statusLine.len
@@ -387,7 +422,7 @@ proc encode(response: var HttpResponse): string =
     result.add k & ": " & v & "\r\n"
 
   result.add "\r\n"
-  result.add response.body
+  result.add response.body # This may be an expensive copy
 
   assert result.len == totalLen
 
@@ -670,12 +705,10 @@ proc loopForever(
               needClosing.add(readyKey.fd.SocketHandle)
               continue
 
-          var outgoingPayload = OutgoingPayloadState()
+          let outgoingPayload = OutgoingPayloadState()
           outgoingPayload.closeConnection = encodedResponse.closeConnection
           outgoingPayload.buffer = move encodedResponse.buffer
-
-          socketState.outgoingPayloads.addLast(move outgoingPayload)
-
+          socketState.outgoingPayloads.addLast(outgoingPayload)
           server.selector.updateHandle2(
             encodedResponse.clientSocket,
             {Read, Write}
