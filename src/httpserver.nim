@@ -81,7 +81,7 @@ type
 
   EncodedHttpResponse = ref object
     clientSocket: SocketHandle
-    websocketUpgrade, closeConnection: bool
+    websocketUpgradeCalled, closeConnection: bool
     buffer1, buffer2: string
 
   WebSocket* = object
@@ -152,12 +152,47 @@ proc updateHandle2(
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
+proc encodeFrameHeader(
+  opcode: uint8,
+  payloadLen: int
+): string {.raises: [], gcsafe.} =
+  assert (opcode and 0b11110000) == 0
+
+  var frameHeaderLen = 2
+
+  if payloadLen <= 125:
+    discard
+  elif payloadLen <= uint16.high.int:
+    frameHeaderLen += 2
+  else:
+    frameHeaderLen += 8
+
+  result = newStringOfCap(frameHeaderLen)
+  result.add cast[char](0b10000000 or opcode)
+
+  if payloadLen <= 125:
+    result.add payloadLen.char
+  elif payloadLen <= uint16.high.int:
+    result.add 126.char
+    var l = cast[uint16](payloadLen).htons
+    result.setLen(result.len + 2)
+    copyMem(result[result.len - 2].addr, l.addr, 2)
+  else:
+    result.add 127.char
+    var l = cast[uint32](payloadLen).htonl
+    result.setLen(result.len + 8)
+    copyMem(result[result.len - 4].addr, l.addr, 4)
+
 proc send*(
   websocket: WebSocket,
   data: string,
   kind = TextMsg,
 ) {.raises: [], gcsafe.} =
   discard
+
+  # Encode it
+  # Queue it
+  # Trigger event
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   discard
@@ -212,37 +247,6 @@ proc websocketUpgrade*(
   response.headers["Connection"] = "upgrade"
   response.headers["Upgrade"] = "websocket"
   response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
-
-proc encodeFrameHeader(
-  opcode: uint8,
-  payloadLen: int
-): string {.raises: [], gcsafe.} =
-  assert (opcode and 0b11110000) == 0
-
-  var frameHeaderLen = 2
-
-  if payloadLen <= 125:
-    discard
-  elif payloadLen <= uint16.high.int:
-    frameHeaderLen += 2
-  else:
-    frameHeaderLen += 8
-
-  result = newStringOfCap(frameHeaderLen)
-  result.add cast[char](0b10000000 or opcode)
-
-  if payloadLen <= 125:
-    result.add payloadLen.char
-  elif payloadLen <= uint16.high.int:
-    result.add 126.char
-    var l = cast[uint16](payloadLen).htons
-    result.setLen(result.len + 2)
-    copyMem(result[result.len - 2].addr, l.addr, 2)
-  else:
-    result.add 127.char
-    var l = cast[uint32](payloadLen).htonl
-    result.setLen(result.len + 8)
-    copyMem(result[result.len - 4].addr, l.addr, 4)
 
 proc popWsMsg(socketState: SocketState): WsMsg {.raises: [].} =
   ## Pops the completed WsMsg from the socket and resets the parse state.
@@ -704,7 +708,7 @@ proc loopForever(
         if encodedResponse.clientSocket in server.selector:
           let socketState = server.selector.getData(encodedResponse.clientSocket)
 
-          if encodedResponse.websocketUpgrade:
+          if encodedResponse.websocketUpgradeCalled:
             socketState.upgradedToWebSocket = true
             if socketState.bytesReceived > 0:
               # Why have we received bytes when we are upgrading the connection?
@@ -924,7 +928,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     encodedResponse.buffer1 = response.encodeHeaders()
     encodedResponse.buffer2 = move response.body
 
-    encodedResponse.websocketUpgrade = request.websocketUpgradeCalled
+    encodedResponse.websocketUpgradeCalled = request.websocketUpgradeCalled
 
     acquire(server.responseQueueLock)
     server.responseQueue.addLast(move encodedResponse)
