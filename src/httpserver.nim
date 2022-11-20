@@ -73,7 +73,7 @@ type
     body*: string
     websocketUpgrade: bool
 
-  EncodedHttpResponse = object
+  EncodedHttpResponse = ref object
     clientSocket: SocketHandle
     websocketUpgrade, closeConnection: bool
     buffer: string
@@ -632,7 +632,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
       clientSocket = request.clientSocket
       httpVersion = request.httpVersion
 
-    var encodedResponse: EncodedHttpResponse
+    var encodedResponse = EncodedHttpResponse()
     encodedResponse.clientSocket = clientSocket
     encodedResponse.closeConnection = httpVersion == Http10 # Default behavior
 
