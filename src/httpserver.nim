@@ -683,7 +683,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 proc newHttpServer*(
   handler: HttpHandler,
   websocketHander: WebSocketHandler = nil,
-  workerThreadCount = max(countProcessors() - 1, 1),
+  workerThreads = max(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
 ): HttpServer {.raises: [HttpServerError].} =
@@ -696,7 +696,7 @@ proc newHttpServer*(
   initLock(result.requestQueueLock)
   initCond(result.requestQueueCond)
   initLock(result.responseQueueLock)
-  result.workerThreads.setLen(workerThreadCount)
+  result.workerThreads.setLen(workerThreads)
   result.nextWebSocketId = 1
 
   try:
