@@ -41,7 +41,7 @@ type
     recvBuffer: string
     bytesReceived: int
     requestState: IncomingRequestState
-    outgoingResponses: Deque[OutgoingResponseState]
+    outgoingPayloads: Deque[OutgoingPayloadState]
 
   IncomingRequestState = object
     headersParsed, chunked: bool
@@ -51,7 +51,7 @@ type
     headers: HttpHeaders
     body: string
 
-  OutgoingResponseState = ref object
+  OutgoingPayloadState = ref object
     closeConnection: bool
     buffer: string
     bytesSent: int
@@ -431,12 +431,12 @@ proc afterSend(
   clientSocket: SocketHandle,
   socketData: SocketData
 ): bool {.raises: [IOSelectorsException].} =
-  let outgoingResponse = socketData.outgoingResponses.peekFirst()
-  if outgoingResponse.bytesSent == outgoingResponse.buffer.len:
-    socketData.outgoingResponses.shrink(1)
-    if outgoingResponse.closeConnection:
+  let outgoingPayload = socketData.outgoingPayloads.peekFirst()
+  if outgoingPayload.bytesSent == outgoingPayload.buffer.len:
+    socketData.outgoingPayloads.shrink(1)
+    if outgoingPayload.closeConnection:
       return true
-  if socketData.outgoingResponses.len == 0:
+  if socketData.outgoingPayloads.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
 proc loopForever(
@@ -465,11 +465,11 @@ proc loopForever(
         if encodedResponse.clientSocket in server.selector:
           let socketData = server.selector.getData(encodedResponse.clientSocket)
 
-          var outgoingResponse = OutgoingResponseState()
-          outgoingResponse.closeConnection = encodedResponse.closeConnection
-          outgoingResponse.buffer = move encodedResponse.buffer
+          var outgoingPayload = OutgoingPayloadState()
+          outgoingPayload.closeConnection = encodedResponse.closeConnection
+          outgoingPayload.buffer = move encodedResponse.buffer
 
-          socketData.outgoingResponses.addLast(move outgoingResponse)
+          socketData.outgoingPayloads.addLast(move outgoingPayload)
 
           server.selector.updateHandle2(
             encodedResponse.clientSocket,
@@ -515,14 +515,14 @@ proc loopForever(
 
         if Write in readyKey.events:
           let
-            outgoingResponse = socketData.outgoingResponses.peekFirst()
+            outgoingPayload = socketData.outgoingPayloads.peekFirst()
             bytesSent = readyKey.fd.SocketHandle.send(
-              outgoingResponse.buffer[outgoingResponse.bytesSent].addr,
-              outgoingResponse.buffer.len - outgoingResponse.bytesSent,
+              outgoingPayload.buffer[outgoingPayload.bytesSent].addr,
+              outgoingPayload.buffer.len - outgoingPayload.bytesSent,
               0
             )
           if bytesSent > 0:
-            outgoingResponse.bytesSent += bytesSent
+            outgoingPayload.bytesSent += bytesSent
             sentTo.add(readyKey.fd.SocketHandle)
           else:
             needClosing.add(readyKey.fd.SocketHandle)
