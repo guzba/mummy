@@ -42,6 +42,7 @@ type
     bytesReceived: int
     requestState: IncomingRequestState
     outgoingPayloads: Deque[OutgoingPayloadState]
+    upgradedToWebSocket: bool
 
   IncomingRequestState = object
     headersParsed, chunked: bool
@@ -464,6 +465,13 @@ proc loopForever(
 
         if encodedResponse.clientSocket in server.selector:
           let socketData = server.selector.getData(encodedResponse.clientSocket)
+
+          if encodedResponse.websocketUpgrade:
+            socketData.upgradedToWebSocket = true
+            if socketData.bytesReceived > 0:
+              # Why have we received bytes when we are upgrading the connection?
+              needClosing.add(readyKey.fd.SocketHandle)
+              continue
 
           var outgoingPayload = OutgoingPayloadState()
           outgoingPayload.closeConnection = encodedResponse.closeConnection
