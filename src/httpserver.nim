@@ -35,7 +35,6 @@ type
     requestQueueCond: Cond
     responseQueue: Deque[EncodedHttpResponse]
     responseQueueLock: Lock
-    nextWebSocketId: uint64
 
   SocketState = ref object
     recvBuffer: string
@@ -73,12 +72,12 @@ type
     server: ptr HttpServerObj
     clientSocket: SocketHandle
     httpVersion: HttpVersion
+    websocketUpgradeCalled: bool
 
   HttpResponse* = object
     statusCode*: int
     headers*: HttpHeaders
     body*: string
-    websocketUpgrade: bool
 
   EncodedHttpResponse = ref object
     clientSocket: SocketHandle
@@ -86,7 +85,6 @@ type
     buffer1, buffer2: string
 
   WebSocket* = object
-    id: uint64
     server: ptr HttpServerObj
     clientSocket: SocketHandle
 
@@ -168,6 +166,12 @@ proc websocketUpgrade*(
   request: HttpRequest,
   response: var HttpResponse
 ): WebSocket {.raises: [HttpServerError], gcsafe.} =
+  if request.websocketUpgradeCalled:
+    raise newException(
+      HttpServerError,
+      "This request has already been upgraded"
+    )
+
   if not request.headers.headerContainsToken("Connection", "upgrade"):
     raise newException(
       HttpServerError,
@@ -196,23 +200,18 @@ proc websocketUpgrade*(
 
   # Looks good to upgrade
 
-  # if response.websocketUpgrade:
-  #   raise newException(
-  #     HttpServerError,
-  #     "This "
-  #   )
+  request.websocketUpgradeCalled = true
+
+  result.server = request.server
+  result.clientSocket = request.clientSocket
 
   let hash =
     secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
 
-  response.websocketUpgrade = true
   response.statusCode = 101
   response.headers["Connection"] = "upgrade"
   response.headers["Upgrade"] = "websocket"
   response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
-
-  result.server = request.server
-  result.clientSocket = request.clientSocket
 
 proc encodeFrameHeader(
   opcode: uint8,
@@ -411,11 +410,7 @@ proc afterRecvWebSocket(
 
       discard
 
-      # var request = server.popRequest(clientSocket, socketState)
-      # acquire(server.requestQueueLock)
-      # server.requestQueue.addLast(move request)
-      # release(server.requestQueueLock)
-      # signal(server.requestQueueCond)
+
 
 proc encodeHeaders(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
@@ -905,12 +900,13 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     var response: HttpResponse
     try:
       {.gcsafe.}: # lol
-        # Move request to avoid looking at it later, may be modified by handler
-        server.handler(move request, response)
+        server.handler(request, response)
     except:
       # TODO: log?
       response = HttpResponse()
       response.statusCode = 500
+
+    # Be careful about looking at request, it may have been modified by handler
 
     # If we are not already going to close the connection, check if we should
     if not encodedResponse.closeConnection:
@@ -928,7 +924,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     encodedResponse.buffer1 = response.encodeHeaders()
     encodedResponse.buffer2 = move response.body
 
-    encodedResponse.websocketUpgrade = response.websocketUpgrade
+    encodedResponse.websocketUpgrade = request.websocketUpgradeCalled
 
     acquire(server.responseQueueLock)
     server.responseQueue.addLast(move encodedResponse)
@@ -958,7 +954,6 @@ proc newHttpServer*(
   initCond(result.requestQueueCond)
   initLock(result.responseQueueLock)
   result.workerThreads.setLen(workerThreads)
-  result.nextWebSocketId = 1
 
   try:
     result.responseReady = newSelectEvent()
