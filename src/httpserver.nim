@@ -60,7 +60,7 @@ type
 
   OutgoingPayloadState = ref object
     closeConnection: bool
-    buffer: string
+    buffer1, buffer2: string
     bytesSent: int
 
   HttpHeaders* = seq[(string, string)]
@@ -83,7 +83,7 @@ type
   EncodedHttpResponse = ref object
     clientSocket: SocketHandle
     websocketUpgrade, closeConnection: bool
-    buffer: string
+    buffer1, buffer2: string
 
   WebSocket* = object
     id: uint64
@@ -206,7 +206,10 @@ proc websocketUpgrade*(
   result.server = request.server
   result.clientSocket = request.clientSocket
 
-proc encodeFrame(opcode: uint8, data: string): string {.raises: [], gcsafe.} =
+proc encodeFrame(
+  opcode: uint8,
+  data: var string
+): string {.raises: [], gcsafe.} =
   assert (opcode and 0b11110000) == 0
 
   var frameLen = 2
@@ -217,8 +220,6 @@ proc encodeFrame(opcode: uint8, data: string): string {.raises: [], gcsafe.} =
     frameLen += 2
   else:
     frameLen += 8
-
-  frameLen += data.len
 
   result = newStringOfCap(frameLen)
   result.add cast[char](0b10000000 or opcode)
@@ -236,29 +237,21 @@ proc encodeFrame(opcode: uint8, data: string): string {.raises: [], gcsafe.} =
     result.setLen(result.len + 8)
     copyMem(result[result.len - 4].addr, l.addr, 4)
 
-  result.add data # This may be an expensive copy
-
-  assert result.len == frameLen
-
-# proc popWsMsg(
-#   server: HttpServer,
-#   clientSocket: SocketHandle,
-#   socketState: SocketState
-# ): WsMsg {.raises: [].} =
-#   ## Pops the completed WsMsg from the socket and resets the parse state.
-#   result = WsMsg()
-#   # result.kind =
-#   result.data = move socketState.msgState.buffer
-#   result.data.setLen(socketState.msgState.msgLen)
-#   socketState.msgState = IncomingWsMsgState()
+proc popWsMsg(socketState: SocketState): WsMsg {.raises: [].} =
+  ## Pops the completed WsMsg from the socket and resets the parse state.
+  result = WsMsg()
+  result.data = move socketState.msgState.buffer
+  result.data.setLen(socketState.msgState.msgLen)
+  socketState.msgState = IncomingWsMsgState()
 
 proc sendPongMsg(
   server: HttpServer,
   clientSocket: SocketHandle,
   socketState: SocketState
 ) {.raises: [IOSelectorsException].} =
+  var data = ""
   let outgoingPayload = OutgoingPayloadState()
-  outgoingPayload.buffer = encodeFrame(0xA, "")
+  outgoingPayload.buffer1 = encodeFrame(0xA, data)
   socketState.outgoingPayloads.addLast(outgoingPayload)
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
@@ -268,8 +261,9 @@ proc sendCloseMsg(
   socketState: SocketState,
   closeConnection: bool
 ) {.raises: [IOSelectorsException].} =
+  var data = ""
   let outgoingPayload = OutgoingPayloadState()
-  outgoingPayload.buffer = encodeFrame(0x8, "")
+  outgoingPayload.buffer1 = encodeFrame(0x8, data)
   outgoingPayload.closeConnection = closeConnection
   socketState.outgoingPayloads.addLast(outgoingPayload)
   socketState.closeFrameSent = true
@@ -385,24 +379,37 @@ proc afterRecvWebSocket(
         return true # Invalid frame, close the connection
 
       # We have a full message
+      let msg = socketState.popWsMsg()
 
       case opcode:
       of 0x1: # Text
-        discard
+        msg.kind = TextMsg
       of 0x2: # Binary
-        discard
+        msg.kind = BinaryMsg
       of 0x8: # Close
         # If we already sent a close, just close the connection
         if socketState.closeFrameSent:
           return true # Close the connection
         # Otherwise send a Close in response then close the connection
         server.sendCloseMsg(clientSocket, socketState, true)
+        continue
       of 0x9: # Ping
         server.sendPongMsg(clientSocket, socketState)
+        continue
       of 0xA: # Pong
-        discard
+        continue
       else:
         return true # Invalid opcode, close the connection
+
+      # The message must be a text or binary message
+
+      discard
+
+      # var request = server.popRequest(clientSocket, socketState)
+      # acquire(server.requestQueueLock)
+      # server.requestQueue.addLast(move request)
+      # release(server.requestQueueLock)
+      # signal(server.requestQueueCond)
 
 proc encode(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
@@ -411,8 +418,8 @@ proc encode(response: var HttpResponse): string {.raises: [], gcsafe.} =
   for (k, v) in response.headers:
     # k + ": " + v + "\r\n"
     totalLen += k.len + 2 + v.len + 2
-  # "\r\n" + response.body
-  totalLen += 2 + response.body.len
+  # "\r\n"
+  totalLen += 2
 
   result = newStringOfCap(totalLen)
   result.add statusLine
@@ -421,9 +428,6 @@ proc encode(response: var HttpResponse): string {.raises: [], gcsafe.} =
     result.add k & ": " & v & "\r\n"
 
   result.add "\r\n"
-  result.add response.body # This may be an expensive copy
-
-  assert result.len == totalLen
 
 proc popRequest(
   server: HttpServer,
@@ -663,8 +667,10 @@ proc afterSend(
   clientSocket: SocketHandle,
   socketState: SocketState
 ): bool {.raises: [IOSelectorsException].} =
-  let outgoingPayload = socketState.outgoingPayloads.peekFirst()
-  if outgoingPayload.bytesSent == outgoingPayload.buffer.len:
+  let
+    outgoingPayload = socketState.outgoingPayloads.peekFirst()
+    totalBytes = outgoingPayload.buffer1.len + outgoingPayload.buffer2.len
+  if outgoingPayload.bytesSent == totalBytes:
     socketState.outgoingPayloads.shrink(1)
     if outgoingPayload.closeConnection:
       return true
@@ -706,7 +712,8 @@ proc loopForever(
 
           let outgoingPayload = OutgoingPayloadState()
           outgoingPayload.closeConnection = encodedResponse.closeConnection
-          outgoingPayload.buffer = move encodedResponse.buffer
+          outgoingPayload.buffer1 = move encodedResponse.buffer1
+          outgoingPayload.buffer2 = move encodedResponse.buffer2
           socketState.outgoingPayloads.addLast(outgoingPayload)
           server.selector.updateHandle2(
             encodedResponse.clientSocket,
@@ -753,11 +760,21 @@ proc loopForever(
         if Write in readyKey.events:
           let
             outgoingPayload = socketState.outgoingPayloads.peekFirst()
-            bytesSent = readyKey.fd.SocketHandle.send(
-              outgoingPayload.buffer[outgoingPayload.bytesSent].addr,
-              outgoingPayload.buffer.len - outgoingPayload.bytesSent,
-              0
-            )
+            bytesSent =
+              if outgoingPayload.bytesSent < outgoingPayload.buffer1.len:
+                readyKey.fd.SocketHandle.send(
+                  outgoingPayload.buffer1[outgoingPayload.bytesSent].addr,
+                  outgoingPayload.buffer1.len - outgoingPayload.bytesSent,
+                  0
+                )
+              else:
+                let buffer2Pos =
+                  outgoingPayload.bytesSent - outgoingPayload.buffer1.len
+                readyKey.fd.SocketHandle.send(
+                  outgoingPayload.buffer2[buffer2Pos].addr,
+                  outgoingPayload.buffer2.len - buffer2Pos,
+                  0
+                )
           if bytesSent > 0:
             outgoingPayload.bytesSent += bytesSent
             sentTo.add(readyKey.fd.SocketHandle)
@@ -902,7 +919,8 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
     response.headers["Content-Length"] = $response.body.len
 
-    encodedResponse.buffer = response.encode()
+    encodedResponse.buffer1 = response.encode()
+    encodedResponse.buffer2 = move response.body
 
     encodedResponse.websocketUpgrade = response.websocketUpgrade
 
