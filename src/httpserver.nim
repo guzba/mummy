@@ -194,6 +194,14 @@ proc websocketUpgrade*(
       "Invalid request to upgade, missing Sec-WebSocket-Version header"
     )
 
+  # Looks good to upgrade
+
+  # if response.websocketUpgrade:
+  #   raise newException(
+  #     HttpServerError,
+  #     "This "
+  #   )
+
   let hash =
     secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
 
@@ -206,34 +214,34 @@ proc websocketUpgrade*(
   result.server = request.server
   result.clientSocket = request.clientSocket
 
-proc encodeFrame(
+proc encodeFrameHeader(
   opcode: uint8,
-  data: var string
+  payloadLen: int
 ): string {.raises: [], gcsafe.} =
   assert (opcode and 0b11110000) == 0
 
-  var frameLen = 2
+  var frameHeaderLen = 2
 
-  if data.len <= 125:
+  if payloadLen <= 125:
     discard
-  elif data.len <= uint16.high.int:
-    frameLen += 2
+  elif payloadLen <= uint16.high.int:
+    frameHeaderLen += 2
   else:
-    frameLen += 8
+    frameHeaderLen += 8
 
-  result = newStringOfCap(frameLen)
+  result = newStringOfCap(frameHeaderLen)
   result.add cast[char](0b10000000 or opcode)
 
-  if data.len <= 125:
-    result.add data.len.char
-  elif data.len <= uint16.high.int:
+  if payloadLen <= 125:
+    result.add payloadLen.char
+  elif payloadLen <= uint16.high.int:
     result.add 126.char
-    var l = cast[uint16](data.len).htons
+    var l = cast[uint16](payloadLen).htons
     result.setLen(result.len + 2)
     copyMem(result[result.len - 2].addr, l.addr, 2)
   else:
     result.add 127.char
-    var l = cast[uint32](data.len).htonl
+    var l = cast[uint32](payloadLen).htonl
     result.setLen(result.len + 8)
     copyMem(result[result.len - 4].addr, l.addr, 4)
 
@@ -249,9 +257,8 @@ proc sendPongMsg(
   clientSocket: SocketHandle,
   socketState: SocketState
 ) {.raises: [IOSelectorsException].} =
-  var data = ""
   let outgoingPayload = OutgoingPayloadState()
-  outgoingPayload.buffer1 = encodeFrame(0xA, data)
+  outgoingPayload.buffer1 = encodeFrameHeader(0xA, 0)
   socketState.outgoingPayloads.addLast(outgoingPayload)
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
@@ -261,9 +268,8 @@ proc sendCloseMsg(
   socketState: SocketState,
   closeConnection: bool
 ) {.raises: [IOSelectorsException].} =
-  var data = ""
   let outgoingPayload = OutgoingPayloadState()
-  outgoingPayload.buffer1 = encodeFrame(0x8, data)
+  outgoingPayload.buffer1 = encodeFrameHeader(0x8, 0)
   outgoingPayload.closeConnection = closeConnection
   socketState.outgoingPayloads.addLast(outgoingPayload)
   socketState.closeFrameSent = true
@@ -414,14 +420,14 @@ proc afterRecvWebSocket(
 proc encodeHeaders(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
 
-  var totalLen = statusLine.len
+  var headersLen = statusLine.len
   for (k, v) in response.headers:
     # k + ": " + v + "\r\n"
-    totalLen += k.len + 2 + v.len + 2
+    headersLen += k.len + 2 + v.len + 2
   # "\r\n"
-  totalLen += 2
+  headersLen += 2
 
-  result = newStringOfCap(totalLen)
+  result = newStringOfCap(headersLen)
   result.add statusLine
 
   for (k, v) in response.headers:
