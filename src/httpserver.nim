@@ -402,9 +402,7 @@ proc afterRecvWebSocket(
       of 0xA: # Pong
         discard
       else:
-        # Drop invalid opcodes
-        # TODO: log?
-        discard
+        return true # Invalid opcode, close the connection
 
 proc encode(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
