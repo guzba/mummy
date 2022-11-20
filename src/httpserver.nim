@@ -27,7 +27,7 @@ type
     workerThreads: seq[Thread[ptr HttpServerObj]]
     running: bool
     socket: SocketHandle
-    selector: Selector[SocketData]
+    selector: Selector[SocketState]
     responseReady: SelectEvent
     clientSockets: HashSet[SocketHandle]
     requestQueue: Deque[HttpRequest]
@@ -37,10 +37,11 @@ type
     responseQueueLock: Lock
     nextWebSocketId: uint64
 
-  SocketData = ref object
+  SocketState = ref object
     recvBuffer: string
     bytesReceived: int
     requestState: IncomingRequestState
+    msgState: IncomingWsMsgState
     outgoingPayloads: Deque[OutgoingPayloadState]
     upgradedToWebSocket: bool
 
@@ -51,6 +52,11 @@ type
     httpMethod, uri: string
     headers: HttpHeaders
     body: string
+
+  IncomingWsMsgState = object
+    opcode: uint8
+    buffer: string
+    msgLen: int
 
   OutgoingPayloadState = ref object
     closeConnection: bool
@@ -83,6 +89,13 @@ type
     id: uint64
     server: ptr HttpServerObj
     clientSocket: SocketHandle
+
+  WsMsgKind* = enum
+    TextMsg, BinaryMsg
+
+  WsMsg* = ref object
+    kind: WsMsgKind
+    data: string
 
 # proc `$`*(request: HttpRequest) =
 #   discard
@@ -131,13 +144,20 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
         if cmpIgnoreCase(v, token) == 0:
           return true
 
-# proc send*(websocket: WebSocket, data = "") =
-#   discard
+proc send*(
+  websocket: WebSocket,
+  kind: WsMsgKind,
+  data: string
+) {.raises: [], gcsafe.} =
+  discard
+
+proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
+  discard
 
 proc websocketUpgrade*(
   request: HttpRequest,
   response: var HttpResponse
-): WebSocket {.raises: [HttpServerError].} =
+): WebSocket {.raises: [HttpServerError], gcsafe.} =
   if not request.headers.headerContainsToken("Connection", "upgrade"):
     raise newException(
       HttpServerError,
@@ -198,7 +218,7 @@ proc encode(response: var HttpResponse): string =
   assert result.len == totalLen
 
 proc updateHandle2(
-  selector: Selector[SocketData],
+  selector: Selector[SocketState],
   socket: SocketHandle,
   events: set[Event]
 ) {.raises: [IOSelectorsException].} =
@@ -207,37 +227,202 @@ proc updateHandle2(
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
+# proc popWsMsg(
+#   server: HttpServer,
+#   clientSocket: SocketHandle,
+#   socketState: SocketState
+# ): WsMsg {.raises: [].} =
+#   ## Pops the completed WsMsg from the socket and resets the parse state.
+#   result = WsMsg()
+#   # result.kind =
+#   result.data = move socketState.msgState.buffer
+#   result.data.setLen(socketState.msgState.msgLen)
+#   socketState.msgState = IncomingWsMsgState()
+
+proc sendPongMsg(
+  server: HttpServer,
+  clientSocket: SocketHandle,
+  socketState: SocketState
+) {.raises: [IOSelectorsException].} =
+
+  echo "HERE"
+
+  discard
+
+  # var outgoingPayload = OutgoingPayloadState()
+
+  # socketState.outgoingPayloads.addLast(move outgoingPayload)
+
+  # server.selector.updateHandle2(clientSocket, {Read, Write})
+
+proc sendCloseMsg(
+  server: HttpServer,
+  clientSocket: SocketHandle,
+  socketState: SocketState
+) {.raises: [IOSelectorsException].} =
+  discard
+
+proc afterRecvWebSocket(
+  server: HttpServer,
+  clientSocket: SocketHandle,
+  socketState: SocketState
+): bool {.raises: [IOSelectorsException].} =
+  # Try to parse entire frames out of the receive buffer
+  while true:
+    if socketState.bytesReceived < 2:
+      return false # Need to receive more bytes
+
+    let
+      b0 = socketState.recvBuffer[0].uint8
+      b1 = socketState.recvBuffer[1].uint8
+      fin = (b0 and 0b10000000) != 0
+      rsv1 = b0 and 0b01000000
+      rsv2 = b0 and 0b00100000
+      rsv3 = b0 and 0b00010000
+      opcode = b0 and 0b00001111
+
+    if rsv1 != 0 or rsv2 != 0 or rsv3 != 0:
+      return true # Per spec this must fail, close the connection
+
+    # Masking bit should be set
+    if (b1 and 0b10000000) == 0:
+      return true # Per spec, close the connection
+
+    if opcode == 0 and socketState.msgState.opcode == 0:
+      # Per spec, the first frame must have an opcode > 0
+      return true # Close the connection
+
+    if socketState.msgState.opcode != 0 and opcode != 0:
+      # Per spec, if we have buffered fragments the opcode must be 0
+      return true # Close the connection
+
+    var pos = 2
+
+    var payloadLen = (b1 and 0b01111111).int
+    if payloadLen <= 125:
+      discard
+    elif payloadLen == 126:
+      if socketState.bytesReceived < 4:
+        return false # Need to receive more bytes
+      var l: uint16
+      copyMem(l.addr, socketState.recvBuffer[pos].addr, 2)
+      payloadLen = l.htons.int
+      pos += 2
+    else:
+      if socketState.bytesReceived < 10:
+        return false # Need to receive more bytes
+      var l: uint32
+      copyMem(l.addr, socketState.recvBuffer[pos + 4].addr, 4)
+      payloadLen = l.htonl.int
+      pos += 8
+
+    if socketState.msgState.msgLen + payloadLen > server.maxBodyLen:
+      return true # Message is too large, close the connection
+
+    if socketState.bytesReceived < pos + 4:
+      return false # Need to receive more bytes
+
+    var mask: array[4, uint8]
+    copyMem(mask.addr, socketState.recvBuffer[pos].addr, 4)
+
+    pos += 4
+
+    if socketState.bytesReceived < pos + payloadLen:
+      return false # Need to receive more bytes
+
+    # Unmask the payload
+    for i in 0 ..< payloadLen:
+      let j = i mod 4
+      socketState.recvBuffer[pos + i] =
+        (socketState.recvBuffer[pos + i].uint8 xor mask[j]).char
+
+    if socketState.msgState.opcode == 0:
+      # This is the first fragment
+      socketState.msgState.opcode = opcode
+
+    # Make room in the message buffer for this fragment
+    let newMsgLen = socketState.msgState.msgLen + payloadLen
+    if socketState.msgState.buffer.len < newMsgLen:
+      let newBufferLen = max(socketState.msgState.buffer.len * 2, newMsgLen)
+      socketState.msgState.buffer.setLen(newBufferLen)
+
+    if payloadLen > 0:
+      # Copy the fragment into the message buffer
+      copyMem(
+        socketState.msgState.buffer[socketState.msgState.msgLen].addr,
+        socketState.recvBuffer[pos].addr,
+        payloadLen
+      )
+      socketState.msgState.msgLen += payloadLen
+
+    # Remove this frame from the receive buffer
+    let frameLen = pos + payloadLen
+    if socketState.bytesReceived == frameLen:
+      socketState.bytesReceived = 0
+    else:
+      copyMem(
+        socketState.recvBuffer[0].addr,
+        socketState.recvBuffer[frameLen].addr,
+        socketState.bytesReceived - frameLen
+      )
+      socketState.bytesReceived -= frameLen
+
+    if fin:
+      if socketState.msgState.opcode == 0:
+        return true # Invalid frame, close the connection
+
+      # We have a full message
+
+      case opcode:
+      of 0x1: # Text
+        discard
+      of 0x2: # Binary
+        discard
+      of 0x8: # Close
+        # If we already sent a close, just close the connection
+        # Otherwise send a Close in response
+        server.sendCloseMsg(clientSocket, socketState)
+      of 0x9: # Ping
+        server.sendPongMsg(clientSocket, socketState)
+      of 0xA: # Pong
+        discard
+      else:
+        # Drop invalid opcodes
+        # TODO: log?
+        discard
+
 proc popRequest(
   server: HttpServer,
   clientSocket: SocketHandle,
-  socketData: SocketData
+  socketState: SocketState
 ): HttpRequest {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = HttpRequest()
   result.server = cast[ptr HttpServerObj](server)
   result.clientSocket = clientSocket
-  result.httpVersion = socketData.requestState.httpVersion
-  result.httpMethod = move socketData.requestState.httpMethod
-  result.uri = move socketData.requestState.uri
-  result.headers = move socketData.requestState.headers
-  result.body = move socketData.requestState.body
-  socketData.requestState = IncomingRequestState()
+  result.httpVersion = socketState.requestState.httpVersion
+  result.httpMethod = move socketState.requestState.httpMethod
+  result.uri = move socketState.requestState.uri
+  result.headers = move socketState.requestState.headers
+  result.body = move socketState.requestState.body
+  result.body.setLen(socketState.requestState.contentLength)
+  socketState.requestState = IncomingRequestState()
 
-proc afterRecv(
+proc afterRecvHttp(
   server: HttpServer,
   clientSocket: SocketHandle,
-  socketData: SocketData
+  socketState: SocketState
 ): bool {.raises: [].} =
   # Have we completed parsing the headers?
-  if not socketData.requestState.headersParsed:
+  if not socketState.requestState.headersParsed:
     # Not done with headers yet, look for the end of the headers
-    let headersEnd = socketData.recvBuffer.find(
+    let headersEnd = socketState.recvBuffer.find(
       "\r\n\r\n",
       0,
-      min(socketData.bytesReceived, server.maxHeadersLen) - 1 # Inclusive
+      min(socketState.bytesReceived, server.maxHeadersLen) - 1 # Inclusive
     )
     if headersEnd < 0: # Headers end not found
-      if socketData.bytesReceived > server.maxHeadersLen:
+      if socketState.bytesReceived > server.maxHeadersLen:
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
@@ -246,17 +431,17 @@ proc afterRecv(
       headerLines: seq[string]
       nextLineStart: int
     while true:
-      let lineEnd = socketData.recvBuffer.find(
+      let lineEnd = socketState.recvBuffer.find(
         "\r\n",
         nextLineStart,
         headersEnd
       )
       if lineEnd == -1:
-        var line = socketData.recvBuffer[nextLineStart ..< headersEnd].strip()
+        var line = socketState.recvBuffer[nextLineStart ..< headersEnd].strip()
         headerLines.add(move line)
         break
       else:
-        headerLines.add(socketData.recvBuffer[nextLineStart ..< lineEnd].strip())
+        headerLines.add(socketState.recvBuffer[nextLineStart ..< lineEnd].strip())
         nextLineStart = lineEnd + 2
 
     let
@@ -265,56 +450,56 @@ proc afterRecv(
     if requestLineParts.len != 3:
       return true # Malformed request line, close the connection
 
-    socketData.requestState.httpMethod = requestLineParts[0]
-    socketData.requestState.uri = requestLineParts[1]
+    socketState.requestState.httpMethod = requestLineParts[0]
+    socketState.requestState.uri = requestLineParts[1]
 
     if requestLineParts[2] == "HTTP/1.0":
-      socketData.requestState.httpVersion = Http10
+      socketState.requestState.httpVersion = Http10
     elif requestLineParts[2] == "HTTP/1.1":
-      socketData.requestState.httpVersion = Http11
+      socketState.requestState.httpVersion = Http11
     else:
       return true # Unsupported HTTP version, close the connection
 
     for i in 1 ..< headerLines.len:
       let parts = headerLines[i].split(": ")
       if parts.len == 2:
-        socketData.requestState.headers.add((parts[0], parts[1]))
+        socketState.requestState.headers.add((parts[0], parts[1]))
       else:
-        socketData.requestState.headers.add((headerLines[i], ""))
+        socketState.requestState.headers.add((headerLines[i], ""))
 
-    socketData.requestState.chunked =
-      socketData.requestState.headers.headerContainsToken(
+    socketState.requestState.chunked =
+      socketState.requestState.headers.headerContainsToken(
         "Transfer-Encoding", "chunked"
       )
 
     # If this is a chunked request ignore any Content-Length headers
-    if not socketData.requestState.chunked:
+    if not socketState.requestState.chunked:
       var foundContentLength: bool
-      for (k, v) in socketData.requestState.headers:
+      for (k, v) in socketState.requestState.headers:
         if cmpIgnoreCase(k, "Content-Length") == 0:
           if foundContentLength:
             # This is a second Content-Length header, not valid
             return true # Close the connection
           foundContentLength = true
           try:
-            socketData.requestState.contentLength = parseInt(v)
+            socketState.requestState.contentLength = parseInt(v)
           except:
             return true # Parsing Content-Length failed, close the connection
 
-      if socketData.requestState.contentLength < 0:
+      if socketState.requestState.contentLength < 0:
         return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
     let bodyStart = headersEnd + 4
-    if socketData.bytesReceived == bodyStart:
-      socketData.bytesReceived = 0
+    if socketState.bytesReceived == bodyStart:
+      socketState.bytesReceived = 0
     else:
       copyMem(
-        socketData.recvBuffer[0].addr,
-        socketData.recvBuffer[bodyStart].addr,
-        socketData.bytesReceived - bodyStart
+        socketState.recvBuffer[0].addr,
+        socketState.recvBuffer[bodyStart].addr,
+        socketState.bytesReceived - bodyStart
       )
-      socketData.bytesReceived -= bodyStart
+      socketState.bytesReceived -= bodyStart
 
     # One of three possible states for request body:
     # 1) We received a Content-Length header, so we know the content length
@@ -322,31 +507,31 @@ proc afterRecv(
     # 3) Neither, so we assume a content length of 0
 
     # Mark that headers have been parsed, must end this block
-    socketData.requestState.headersParsed = true
+    socketState.requestState.headersParsed = true
 
   # Headers have been parsed, now for the body
 
-  if socketData.requestState.chunked: # Chunked request
+  if socketState.requestState.chunked: # Chunked request
     # Process as many chunks as we have
     while true:
-      if socketData.bytesReceived < 3:
+      if socketState.bytesReceived < 3:
         return false # Need to receive more bytes
 
       # Look for the end of the chunk length
-      let chunkLenEnd = socketData.recvBuffer.find(
+      let chunkLenEnd = socketState.recvBuffer.find(
         "\r\n",
         0,
-        min(socketData.bytesReceived - 1, 19) # Inclusive with a reasonable max
+        min(socketState.bytesReceived - 1, 19) # Inclusive with a reasonable max
       )
       if chunkLenEnd < 0: # Chunk length end not found
-        if socketData.bytesReceived > 19:
+        if socketState.bytesReceived > 19:
           return true # We should have found it, close the connection
         return false # Try again after receiving more bytes
 
       var chunkLen: int
       try:
         discard parseHex(
-          socketData.recvBuffer,
+          socketState.recvBuffer,
           chunkLen,
           0,
           chunkLenEnd
@@ -354,90 +539,102 @@ proc afterRecv(
       except:
         return true # Parsing chunk length failed, close the connection
 
-      if socketData.requestState.contentLength + chunkLen > server.maxBodyLen:
+      if socketState.requestState.contentLength + chunkLen > server.maxBodyLen:
         return true # Body is too large, close the connection
 
       let chunkStart = chunkLenEnd + 2
-      if socketData.bytesReceived < chunkStart + chunkLen + 2:
+      if socketState.bytesReceived < chunkStart + chunkLen + 2:
         return false # Need to receive more bytes
 
       # Make room in the body buffer for this chunk
-      let newContentLength = socketData.requestState.contentLength + chunkLen
-      if socketData.requestState.body.len < newContentLength:
-        let newLen = max(socketData.requestState.body.len * 2, newContentLength)
-        socketData.requestState.body.setLen(newLen)
+      let newContentLength = socketState.requestState.contentLength + chunkLen
+      if socketState.requestState.body.len < newContentLength:
+        let newLen = max(socketState.requestState.body.len * 2, newContentLength)
+        socketState.requestState.body.setLen(newLen)
 
       copyMem(
-        socketData.requestState.body[socketData.requestState.contentLength].addr,
-        socketData.recvBuffer[chunkStart].addr,
+        socketState.requestState.body[socketState.requestState.contentLength].addr,
+        socketState.recvBuffer[chunkStart].addr,
         chunkLen
       )
 
-      socketData.requestState.contentLength += chunkLen
+      socketState.requestState.contentLength += chunkLen
 
       # Remove this chunk from the receive buffer
       let
         nextChunkStart = chunkLenEnd + 2 + chunkLen + 2
-        bytesRemaining = socketData.bytesReceived - nextChunkStart
+        bytesRemaining = socketState.bytesReceived - nextChunkStart
       copyMem(
-        socketData.recvBuffer[0].addr,
-        socketData.recvBuffer[nextChunkStart].addr,
+        socketState.recvBuffer[0].addr,
+        socketState.recvBuffer[nextChunkStart].addr,
         bytesRemaining
       )
-      socketData.bytesReceived = bytesRemaining
+      socketState.bytesReceived = bytesRemaining
 
       if chunkLen == 0:
-        var request = server.popRequest(clientSocket, socketData)
+        var request = server.popRequest(clientSocket, socketState)
         acquire(server.requestQueueLock)
         server.requestQueue.addLast(move request)
         release(server.requestQueueLock)
         signal(server.requestQueueCond)
         return false
   else:
-    if socketData.requestState.contentLength > server.maxBodyLen:
+    if socketState.requestState.contentLength > server.maxBodyLen:
       return true # Body is too large, close the connection
 
-    if socketData.bytesReceived < socketData.requestState.contentLength:
+    if socketState.bytesReceived < socketState.requestState.contentLength:
       return false # Need to receive more bytes
 
     # We have the entire request body
 
     # If this request has a body, fill it
-    if socketData.requestState.contentLength > 0:
-      socketData.requestState.body.setLen(socketData.requestState.contentLength)
+    if socketState.requestState.contentLength > 0:
+      socketState.requestState.body.setLen(socketState.requestState.contentLength)
       copyMem(
-        socketData.requestState.body[0].addr,
-        socketData.recvBuffer[0].addr,
-        socketData.requestState.contentLength
+        socketState.requestState.body[0].addr,
+        socketState.recvBuffer[0].addr,
+        socketState.requestState.contentLength
       )
 
     # Remove this request from the receive buffer
     let bytesRemaining =
-      socketData.bytesReceived - socketData.requestState.contentLength
+      socketState.bytesReceived - socketState.requestState.contentLength
     copyMem(
-      socketData.recvBuffer[0].addr,
-      socketData.recvBuffer[socketData.requestState.contentLength].addr,
+      socketState.recvBuffer[0].addr,
+      socketState.recvBuffer[socketState.requestState.contentLength].addr,
       bytesRemaining
     )
-    socketData.bytesReceived = bytesRemaining
+    socketState.bytesReceived = bytesRemaining
 
-    var request = server.popRequest(clientSocket, socketData)
+    var request = server.popRequest(clientSocket, socketState)
     acquire(server.requestQueueLock)
     server.requestQueue.addLast(move request)
     release(server.requestQueueLock)
     signal(server.requestQueueCond)
 
+proc afterRecv(
+  server: HttpServer,
+  clientSocket: SocketHandle,
+  socketState: SocketState
+): bool {.raises: [IOSelectorsException].} =
+  # Have we upgraded this connection to a websocket?
+  # If not, treat incoming bytes as part of HTTP requests.
+  if socketState.upgradedToWebSocket:
+    server.afterRecvWebSocket(clientSocket, socketState)
+  else:
+    server.afterRecvHttp(clientSocket, socketState)
+
 proc afterSend(
   server: HttpServer,
   clientSocket: SocketHandle,
-  socketData: SocketData
+  socketState: SocketState
 ): bool {.raises: [IOSelectorsException].} =
-  let outgoingPayload = socketData.outgoingPayloads.peekFirst()
+  let outgoingPayload = socketState.outgoingPayloads.peekFirst()
   if outgoingPayload.bytesSent == outgoingPayload.buffer.len:
-    socketData.outgoingPayloads.shrink(1)
+    socketState.outgoingPayloads.shrink(1)
     if outgoingPayload.closeConnection:
       return true
-  if socketData.outgoingPayloads.len == 0:
+  if socketState.outgoingPayloads.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
 proc loopForever(
@@ -464,11 +661,11 @@ proc loopForever(
         release(server.responseQueueLock)
 
         if encodedResponse.clientSocket in server.selector:
-          let socketData = server.selector.getData(encodedResponse.clientSocket)
+          let socketState = server.selector.getData(encodedResponse.clientSocket)
 
           if encodedResponse.websocketUpgrade:
-            socketData.upgradedToWebSocket = true
-            if socketData.bytesReceived > 0:
+            socketState.upgradedToWebSocket = true
+            if socketState.bytesReceived > 0:
               # Why have we received bytes when we are upgrading the connection?
               needClosing.add(readyKey.fd.SocketHandle)
               continue
@@ -477,7 +674,7 @@ proc loopForever(
           outgoingPayload.closeConnection = encodedResponse.closeConnection
           outgoingPayload.buffer = move encodedResponse.buffer
 
-          socketData.outgoingPayloads.addLast(move outgoingPayload)
+          socketState.outgoingPayloads.addLast(move outgoingPayload)
 
           server.selector.updateHandle2(
             encodedResponse.clientSocket,
@@ -494,28 +691,28 @@ proc loopForever(
           clientSocket.setBlocking(false)
           server.clientSockets.incl(clientSocket)
 
-          let socketData = SocketData()
-          socketData.recvBuffer.setLen(initialRecvBufferLen)
-          server.selector.registerHandle(clientSocket, {Read}, socketData)
+          let socketState = SocketState()
+          socketState.recvBuffer.setLen(initialRecvBufferLen)
+          server.selector.registerHandle(clientSocket, {Read}, socketState)
       else:
         if Error in readyKey.events:
           needClosing.add(readyKey.fd.SocketHandle)
           continue
 
-        let socketData = server.selector.getData(readyKey.fd)
+        let socketState = server.selector.getData(readyKey.fd)
 
         if Read in readyKey.events:
           # Expand the buffer if it is full
-          if socketData.bytesReceived == socketData.recvBuffer.len:
-            socketData.recvBuffer.setLen(socketData.recvBuffer.len * 2)
+          if socketState.bytesReceived == socketState.recvBuffer.len:
+            socketState.recvBuffer.setLen(socketState.recvBuffer.len * 2)
 
           let bytesReceived = readyKey.fd.SocketHandle.recv(
-            socketData.recvBuffer[socketData.bytesReceived].addr,
-            socketData.recvBuffer.len - socketData.bytesReceived,
+            socketState.recvBuffer[socketState.bytesReceived].addr,
+            socketState.recvBuffer.len - socketState.bytesReceived,
             0
           )
           if bytesReceived > 0:
-            socketData.bytesReceived += bytesReceived
+            socketState.bytesReceived += bytesReceived
             receivedFrom.add(readyKey.fd.SocketHandle)
           else:
             needClosing.add(readyKey.fd.SocketHandle)
@@ -523,7 +720,7 @@ proc loopForever(
 
         if Write in readyKey.events:
           let
-            outgoingPayload = socketData.outgoingPayloads.peekFirst()
+            outgoingPayload = socketState.outgoingPayloads.peekFirst()
             bytesSent = readyKey.fd.SocketHandle.send(
               outgoingPayload.buffer[outgoingPayload.bytesSent].addr,
               outgoingPayload.buffer.len - outgoingPayload.bytesSent,
@@ -540,8 +737,8 @@ proc loopForever(
       if clientSocket in needClosing:
         continue
       let
-        socketData = server.selector.getData(clientSocket)
-        needsClosing = server.afterRecv(clientSocket, socketData)
+        socketState = server.selector.getData(clientSocket)
+        needsClosing = server.afterRecv(clientSocket, socketState)
       if needsClosing:
         needClosing.add(clientSocket)
 
@@ -549,8 +746,8 @@ proc loopForever(
       if clientSocket in needClosing:
         continue
       let
-        socketData = server.selector.getData(clientSocket)
-        needsClosing = server.afterSend(clientSocket, socketData)
+        socketState = server.selector.getData(clientSocket)
+        needsClosing = server.afterSend(clientSocket, socketState)
       if needsClosing:
         needClosing.add(clientSocket)
 
@@ -558,7 +755,7 @@ proc loopForever(
       try:
         server.selector.unregister(clientSocket)
       except:
-        # Leaks SocketData for this socket
+        # Leaks SocketState for this socket
         # Raise as a serve() exception
         raise cast[ref IOSelectorsException](getCurrentException())
       clientSocket.close()
@@ -595,7 +792,7 @@ proc serve*(
     if server.socket.listen(listenBacklogLen) < 0:
       raiseOSError(osLastError())
 
-    server.selector = newSelector[SocketData]()
+    server.selector = newSelector[SocketState]()
     server.selector.registerEvent(server.responseReady, nil)
     server.selector.registerHandle(server.socket, {Read}, nil)
   except:
@@ -656,7 +853,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
         # Move request to avoid looking at it later, may be modified by handler
         server.handler(move request, response)
     except:
-      # TODO log?
+      # TODO: log?
       response = HttpResponse()
       response.statusCode = 500
 
