@@ -144,6 +144,16 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
         if cmpIgnoreCase(v, token) == 0:
           return true
 
+proc updateHandle2(
+  selector: Selector[SocketState],
+  socket: SocketHandle,
+  events: set[Event]
+) {.raises: [IOSelectorsException].} =
+  try:
+    selector.updateHandle(socket, events)
+  except ValueError: # Why ValueError?
+    raise newException(IOSelectorsException, getCurrentExceptionMsg())
+
 proc send*(
   websocket: WebSocket,
   kind: WsMsgKind,
@@ -195,37 +205,6 @@ proc websocketUpgrade*(
 
   result.server = request.server
   result.clientSocket = request.clientSocket
-
-proc encode(response: var HttpResponse): string =
-  let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
-
-  var totalLen = statusLine.len
-  for (k, v) in response.headers:
-    # k + ": " + v + "\r\n"
-    totalLen += k.len + 2 + v.len + 2
-  # "\r\n" + response.body
-  totalLen += 2 + response.body.len
-
-  result = newStringOfCap(totalLen)
-  result.add statusLine
-
-  for (k, v) in response.headers:
-    result.add k & ": " & v & "\r\n"
-
-  result.add "\r\n"
-  result.add response.body
-
-  assert result.len == totalLen
-
-proc updateHandle2(
-  selector: Selector[SocketState],
-  socket: SocketHandle,
-  events: set[Event]
-) {.raises: [IOSelectorsException].} =
-  try:
-    selector.updateHandle(socket, events)
-  except ValueError: # Why ValueError?
-    raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
 # proc popWsMsg(
 #   server: HttpServer,
@@ -390,6 +369,27 @@ proc afterRecvWebSocket(
         # Drop invalid opcodes
         # TODO: log?
         discard
+
+proc encode(response: var HttpResponse): string =
+  let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
+
+  var totalLen = statusLine.len
+  for (k, v) in response.headers:
+    # k + ": " + v + "\r\n"
+    totalLen += k.len + 2 + v.len + 2
+  # "\r\n" + response.body
+  totalLen += 2 + response.body.len
+
+  result = newStringOfCap(totalLen)
+  result.add statusLine
+
+  for (k, v) in response.headers:
+    result.add k & ": " & v & "\r\n"
+
+  result.add "\r\n"
+  result.add response.body
+
+  assert result.len == totalLen
 
 proc popRequest(
   server: HttpServer,
