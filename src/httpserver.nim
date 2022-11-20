@@ -1,5 +1,5 @@
 import std/base64, std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
-    std/parseutils, std/selectors, std/sha1, std/strutils
+    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils
 
 export Port
 
@@ -24,17 +24,18 @@ type
     handler: HttpHandler
     websocketHander: WebSocketHandler
     maxHeadersLen, maxBodyLen: int
+    workerThreads: seq[Thread[ptr HttpServerObj]]
+    running: bool
     socket: SocketHandle
     selector: Selector[SocketData]
     responseReady: SelectEvent
-    clientSockets: seq[SocketHandle]
-    requestQueue: Deque[(SocketHandle, HttpVersion, HttpRequest)]
+    clientSockets: HashSet[SocketHandle]
+    requestQueue: Deque[HttpRequest]
     requestQueueLock: Lock
     requestQueueCond: Cond
     responseQueue: Deque[EncodedHttpResponse]
     responseQueueLock: Lock
-    running: bool
-    workerThreads: seq[Thread[ptr HttpServerObj]]
+    nextWebSocketId: uint64
 
   SocketData = ref object
     recvBuffer: string
@@ -47,7 +48,7 @@ type
     contentLength: int
     httpVersion: HttpVersion
     httpMethod, uri: string
-    headers: seq[(string, string)]
+    headers: HttpHeaders
     body: string
 
   OutgoingResponseState = ref object
@@ -63,20 +64,24 @@ type
     headers*: HttpHeaders
     body*: string
     server: ptr HttpServerObj
+    clientSocket: SocketHandle
+    httpVersion: HttpVersion
 
   HttpResponse* = object
     statusCode*: int
     headers*: HttpHeaders
     body*: string
+    websocketUpgrade: bool
 
   EncodedHttpResponse = object
     clientSocket: SocketHandle
-    closeConnection: bool
+    websocketUpgrade, closeConnection: bool
     buffer: string
 
   WebSocket* = object
-    id: int
+    id: uint64
     server: ptr HttpServerObj
+    clientSocket: SocketHandle
 
 # proc `$`*(request: HttpRequest) =
 #   discard
@@ -161,12 +166,14 @@ proc websocketUpgrade*(
   let hash =
     secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
 
+  response.websocketUpgrade = true
   response.statusCode = 101
   response.headers["Connection"] = "upgrade"
   response.headers["Upgrade"] = "websocket"
   response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
 
-
+  result.server = request.server
+  result.clientSocket = request.clientSocket
 
 proc encode(response: var HttpResponse): string =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
@@ -201,11 +208,14 @@ proc updateHandle2(
 
 proc popRequest(
   server: HttpServer,
+  clientSocket: SocketHandle,
   socketData: SocketData
 ): HttpRequest {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = HttpRequest()
   result.server = cast[ptr HttpServerObj](server)
+  result.clientSocket = clientSocket
+  result.httpVersion = socketData.requestState.httpVersion
   result.httpMethod = move socketData.requestState.httpMethod
   result.uri = move socketData.requestState.uri
   result.headers = move socketData.requestState.headers
@@ -376,11 +386,9 @@ proc afterRecv(
       socketData.bytesReceived = bytesRemaining
 
       if chunkLen == 0:
-        var request = server.popRequest(socketData)
+        var request = server.popRequest(clientSocket, socketData)
         acquire(server.requestQueueLock)
-        server.requestQueue.addLast(
-          (clientSocket, socketData.requestState.httpVersion, move request)
-        )
+        server.requestQueue.addLast(move request)
         release(server.requestQueueLock)
         signal(server.requestQueueCond)
         return false
@@ -412,11 +420,9 @@ proc afterRecv(
     )
     socketData.bytesReceived = bytesRemaining
 
-    var request = server.popRequest(socketData)
+    var request = server.popRequest(clientSocket, socketData)
     acquire(server.requestQueueLock)
-    server.requestQueue.addLast(
-      (clientSocket, socketData.requestState.httpVersion, move request)
-    )
+    server.requestQueue.addLast(move request)
     release(server.requestQueueLock)
     signal(server.requestQueueCond)
 
@@ -478,7 +484,7 @@ proc loopForever(
             continue
 
           clientSocket.setBlocking(false)
-          server.clientSockets.add(clientSocket)
+          server.clientSockets.incl(clientSocket)
 
           let socketData = SocketData()
           socketData.recvBuffer.setLen(initialRecvBufferLen)
@@ -548,7 +554,7 @@ proc loopForever(
         # Raise as a serve() exception
         raise cast[ref IOSelectorsException](getCurrentException())
       clientSocket.close()
-      server.clientSockets.del(server.clientSockets.find(clientSocket))
+      server.clientSockets.excl(clientSocket)
 
 proc serve*(
   server: HttpServer,
@@ -617,9 +623,14 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
       release(server.requestQueueLock)
       return
 
-    var (clientSocket, httpVersion, request) = server.requestQueue.popFirst()
+    var request = server.requestQueue.popFirst()
 
     release(server.requestQueueLock)
+
+    let
+      server = request.server
+      clientSocket = request.clientSocket
+      httpVersion = request.httpVersion
 
     var encodedResponse: EncodedHttpResponse
     encodedResponse.clientSocket = clientSocket
@@ -656,6 +667,8 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
     encodedResponse.buffer = response.encode()
 
+    encodedResponse.websocketUpgrade = response.websocketUpgrade
+
     acquire(server.responseQueueLock)
     server.responseQueue.addLast(move encodedResponse)
     release(server.responseQueueLock)
@@ -684,6 +697,7 @@ proc newHttpServer*(
   initCond(result.requestQueueCond)
   initLock(result.responseQueueLock)
   result.workerThreads.setLen(workerThreadCount)
+  result.nextWebSocketId = 1
 
   try:
     result.responseReady = newSelectEvent()
