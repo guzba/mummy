@@ -22,6 +22,7 @@ type
 
   HttpServerObj = object
     handler: HttpHandler
+    websocketHander: WebSocketHandler
     maxHeadersLen, maxBodyLen: int
     socket: SocketHandle
     selector: Selector[SocketData]
@@ -61,6 +62,7 @@ type
     uri*: string
     headers*: HttpHeaders
     body*: string
+    server: ptr HttpServerObj
 
   HttpResponse* = object
     statusCode*: int
@@ -72,9 +74,18 @@ type
     closeConnection: bool
     buffer: string
 
-  WebSocket* = int
+  WebSocket* = object
+    id: int
+    server: ptr HttpServerObj
 
+# proc `$`*(request: HttpRequest) =
+#   discard
 
+# proc `$`*(response: var HttpResponse) =
+#   discard
+
+# proc `$`*(websocket: WebSocket) =
+#   discard
 
 template currentExceptionAsHttpServerError(): untyped =
   let e = getCurrentException()
@@ -114,8 +125,8 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
         if cmpIgnoreCase(v, token) == 0:
           return true
 
-proc send*(websocket: WebSocket, data = "") =
-  discard
+# proc send*(websocket: WebSocket, data = "") =
+#   discard
 
 proc websocketUpgrade*(
   request: HttpRequest,
@@ -155,6 +166,8 @@ proc websocketUpgrade*(
   response.headers["Upgrade"] = "websocket"
   response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
 
+
+
 proc encode(response: var HttpResponse): string =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
 
@@ -186,9 +199,13 @@ proc updateHandle2(
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
-proc popRequest(socketData: SocketData): HttpRequest {.raises: [].} =
+proc popRequest(
+  server: HttpServer,
+  socketData: SocketData
+): HttpRequest {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = HttpRequest()
+  result.server = cast[ptr HttpServerObj](server)
   result.httpMethod = move socketData.requestState.httpMethod
   result.uri = move socketData.requestState.uri
   result.headers = move socketData.requestState.headers
@@ -359,7 +376,7 @@ proc afterRecv(
       socketData.bytesReceived = bytesRemaining
 
       if chunkLen == 0:
-        var request = socketData.popRequest()
+        var request = server.popRequest(socketData)
         acquire(server.requestQueueLock)
         server.requestQueue.addLast(
           (clientSocket, socketData.requestState.httpVersion, move request)
@@ -395,7 +412,7 @@ proc afterRecv(
     )
     socketData.bytesReceived = bytesRemaining
 
-    var request = socketData.popRequest()
+    var request = server.popRequest(socketData)
     acquire(server.requestQueueLock)
     server.requestQueue.addLast(
       (clientSocket, socketData.requestState.httpVersion, move request)
@@ -659,6 +676,7 @@ proc newHttpServer*(
 ): HttpServer {.raises: [HttpServerError].} =
   result = HttpServer()
   result.handler = handler
+  result.websocketHander = websocketHander
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.running = true
