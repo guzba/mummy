@@ -1,5 +1,5 @@
-import std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
-    std/parseutils, std/selectors, std/strutils
+import std/base64, std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
+    std/parseutils, std/selectors, std/sha1, std/strutils
 
 export Port
 
@@ -9,10 +9,14 @@ const
   initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 type
+  HttpServerError* = object of CatchableError
+
   HttpVersion* = enum
     Http10, Http11
 
   HttpHandler* = proc(request: HttpRequest, response: var HttpResponse)
+
+  WebSocketHandler* = proc(websocket: WebSocket)
 
   HttpServer* = ref HttpServerObj
 
@@ -68,7 +72,9 @@ type
     closeConnection: bool
     buffer: string
 
-  HttpServerError* = object of CatchableError
+  WebSocket* = int
+
+
 
 template currentExceptionAsHttpServerError(): untyped =
   let e = getCurrentException()
@@ -107,6 +113,47 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
       else:
         if cmpIgnoreCase(v, token) == 0:
           return true
+
+proc send*(websocket: WebSocket, data = "") =
+  discard
+
+proc websocketUpgrade*(
+  request: HttpRequest,
+  response: var HttpResponse
+): WebSocket {.raises: [HttpServerError].} =
+  if not request.headers.headerContainsToken("Connection", "upgrade"):
+    raise newException(
+      HttpServerError,
+      "Invalid request to upgade, missing 'Connection: upgrade' header"
+    )
+
+  if not request.headers.headerContainsToken("Upgrade", "websocket"):
+    raise newException(
+      HttpServerError,
+      "Invalid request to upgade, missing 'Upgrade: websocket' header"
+    )
+
+  let websocketKey = request.headers["Sec-WebSocket-Key"]
+  if websocketKey == "":
+    raise newException(
+      HttpServerError,
+      "Invalid request to upgade, missing Sec-WebSocket-Key header"
+    )
+
+  let websocketVersion = request.headers["Sec-WebSocket-Version"]
+  if websocketVersion != "13":
+    raise newException(
+      HttpServerError,
+      "Invalid request to upgade, missing Sec-WebSocket-Version header"
+    )
+
+  let hash =
+    secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
+
+  response.statusCode = 101
+  response.headers["Connection"] = "upgrade"
+  response.headers["Upgrade"] = "websocket"
+  response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
 
 proc encode(response: var HttpResponse): string =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
@@ -570,12 +617,12 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     var response: HttpResponse
     try:
       {.gcsafe.}: # lol
-        server.handler(request, response)
+        # Move request to avoid looking at it later, may be modified by handler
+        server.handler(move request, response)
     except:
-      echo "BAD ", getCurrentExceptionMsg()
-
-    # Request may have been modified by the handler, do not look at it
-    request = nil
+      # TODO log?
+      response = HttpResponse()
+      response.statusCode = 500
 
     # If we are not already going to close the connection, check if we should
     if not encodedResponse.closeConnection:
@@ -583,12 +630,12 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
         "Connection", "close"
       )
 
-    response.headers["Content-Length"] = $response.body.len
-
     if encodedResponse.closeConnection:
       response.headers["Connection"] = "close"
-    else:
+    elif httpVersion == Http10 or "Connection" notin response.headers:
       response.headers["Connection"] = "keep-alive"
+
+    response.headers["Content-Length"] = $response.body.len
 
     encodedResponse.buffer = response.encode()
 
@@ -605,6 +652,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
 proc newHttpServer*(
   handler: HttpHandler,
+  websocketHander: WebSocketHandler = nil,
   workerThreadCount = max(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB

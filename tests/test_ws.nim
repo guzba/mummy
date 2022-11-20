@@ -4,8 +4,9 @@ var serverThread: Thread[void]
 
 proc serverProc() =
   proc handler(request: HttpRequest, response: var HttpResponse) =
-    echo request.headers
-    echo request.body
+    let ws = request.websocketUpgrade(response)
+    echo ws
+    echo response.headers
 
   let server = newHttpServer(handler)
   server.serve(Port(8081))

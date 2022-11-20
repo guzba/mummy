@@ -4,7 +4,9 @@ proc main {.async.} =
   var server = newAsyncHttpServer()
 
   proc cb(req: Request) {.async.} =
-    await req.respond(Http200, "OK")
+    let headers = {"Content-type": "application/json"}
+    await req.respond(Http200, "{}", headers.newHttpHeaders())
+    # raise newException(ValueError, "bad")
 
   server.listen(Port(8080))
 
