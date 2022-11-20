@@ -411,7 +411,7 @@ proc afterRecvWebSocket(
       # release(server.requestQueueLock)
       # signal(server.requestQueueCond)
 
-proc encode(response: var HttpResponse): string {.raises: [], gcsafe.} =
+proc encodeHeaders(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
 
   var totalLen = statusLine.len
@@ -919,7 +919,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
     response.headers["Content-Length"] = $response.body.len
 
-    encodedResponse.buffer1 = response.encode()
+    encodedResponse.buffer1 = response.encodeHeaders()
     encodedResponse.buffer2 = move response.body
 
     encodedResponse.websocketUpgrade = response.websocketUpgrade
