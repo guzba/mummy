@@ -81,7 +81,7 @@ type
 
   EncodedHttpResponse = ref object
     clientSocket: SocketHandle
-    websocketUpgradeCalled, closeConnection: bool
+    isWebSocketUpgrade, closeConnection: bool
     buffer1, buffer2: string
 
   WebSocket* = object
@@ -708,7 +708,7 @@ proc loopForever(
         if encodedResponse.clientSocket in server.selector:
           let socketState = server.selector.getData(encodedResponse.clientSocket)
 
-          if encodedResponse.websocketUpgradeCalled:
+          if encodedResponse.isWebSocketUpgrade:
             socketState.upgradedToWebSocket = true
             if socketState.bytesReceived > 0:
               # Why have we received bytes when we are upgrading the connection?
@@ -928,7 +928,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     encodedResponse.buffer1 = response.encodeHeaders()
     encodedResponse.buffer2 = move response.body
 
-    encodedResponse.websocketUpgradeCalled = request.websocketUpgradeCalled
+    encodedResponse.isWebSocketUpgrade = request.websocketUpgradeCalled
 
     acquire(server.responseQueueLock)
     server.responseQueue.addLast(move encodedResponse)
