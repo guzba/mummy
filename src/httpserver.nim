@@ -1,5 +1,5 @@
 import std/base64, std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
-    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils
+    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/times
 
 export Port
 
@@ -48,7 +48,8 @@ type
     requestState: IncomingRequestState
     msgState: IncomingWsMsgState
     outgoingBuffers: Deque[OutgoingBuffer]
-    upgradedToWebSocket, closeFrameQueued, closeFrameSent: bool
+    closeFrameQueuedAt: float64
+    upgradedToWebSocket, closeFrameSent: bool
     sendsWaitingForUpgrade: seq[EncodedFrame]
 
   IncomingRequestState = object
@@ -317,7 +318,7 @@ proc sendCloseMsg(
   outgoingBuffer.isCloseFrame = true
   outgoingBuffer.closeConnection = closeConnection
   handleData.outgoingBuffers.addLast(outgoingBuffer)
-  handleData.closeFrameQueued = true
+  handleData.closeFrameQueuedAt = epochTime()
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc afterRecvWebSocket(
@@ -440,11 +441,10 @@ proc afterRecvWebSocket(
       of 0x8: # Close
         # If we already queued a close, just close the connection
         # This is not quite perfect
-        if handleData.closeFrameQueued:
+        if handleData.closeFrameQueuedAt > 0:
           return true # Close the connection
         # Otherwise send a Close in response then close the connection
-        if not handleData.closeFrameQueued:
-          server.sendCloseMsg(clientSocket, handleData, true)
+        server.sendCloseMsg(clientSocket, handleData, true)
         continue
       of 0x9: # Ping
         server.sendPongMsg(clientSocket, handleData)
@@ -776,7 +776,7 @@ proc loopForever(
               # Are there any sends that were waiting for this response?
               if clientHandleData.sendsWaitingForUpgrade.len > 0:
                 for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
-                  if clientHandleData.closeFrameQueued:
+                  if clientHandleData.closeFrameQueuedAt > 0:
                     discard # Drop this message
                     # TODO: log?
                   else:
@@ -786,7 +786,7 @@ proc loopForever(
                     outgoingBuffer.isCloseFrame = encodedFrame.isCloseFrame
                     clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
                     if encodedFrame.isCloseFrame:
-                      clientHandleData.closeFrameQueued = true
+                      clientHandleData.closeFrameQueuedAt = epochTime()
                 clientHandleData.sendsWaitingForUpgrade.setLen(0)
 
         elif eventHandleData.handleKind == SendQueuedEvent:
@@ -800,7 +800,7 @@ proc loopForever(
 
             # Have we sent the upgrade response yet?
             if clientHandleData.upgradedToWebSocket:
-              if clientHandleData.closeFrameQueued:
+              if clientHandleData.closeFrameQueuedAt > 0:
                 discard # Drop this message
                 # TODO: log?
               else:
@@ -810,7 +810,7 @@ proc loopForever(
                 outgoingBuffer.isCloseFrame = encodedFrame.isCloseFrame
                 clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
                 if encodedFrame.isCloseFrame:
-                  clientHandleData.closeFrameQueued = true
+                  clientHandleData.closeFrameQueuedAt = epochTime()
                 server.selector.updateHandle2(
                   encodedFrame.clientSocket,
                   {Read, Write}
@@ -842,6 +842,11 @@ proc loopForever(
         let handleData = server.selector.getData(readyKey.fd)
 
         if Read in readyKey.events:
+          if epochTime() - handleData.closeFrameQueuedAt > 10:
+            # The Close frame dance didn't work out, just close the connection
+            needClosing.add(readyKey.fd.SocketHandle)
+            continue
+
           # Expand the buffer if it is full
           if handleData.bytesReceived == handleData.recvBuffer.len:
             handleData.recvBuffer.setLen(handleData.recvBuffer.len * 2)
