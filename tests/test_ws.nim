@@ -10,7 +10,16 @@ proc serverProc() =
     ws.send("ASDF")
     ws.send("Second", BinaryMsg)
 
-  let server = newHttpServer(handler)
+  proc onOpen(websocket: httpserver.WebSocket) =
+    discard
+
+  proc onMessage(websocket: httpserver.WebSocket, kind: WsMsgKind, data: string) =
+    discard
+
+  proc onClose(websocket: httpserver.WebSocket) =
+    discard
+
+  let server = newHttpServer(handler, onOpen, onMessage, onClose)
   server.serve(Port(8081))
 
 createThread(serverThread, serverProc)
@@ -20,7 +29,9 @@ sleep(1000)
 let websocket = waitFor newWebSocket("ws://127.0.0.1:8081")
 echo "C2S"
 waitFor websocket.ping()
+waitFor websocket.send("Client to server")
 echo waitFor websocket.receivePacket()
 echo "!!"
 echo waitFor websocket.receivePacket()
+websocket.close()
 waitFor sleepAsync(1000)

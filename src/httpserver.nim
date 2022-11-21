@@ -17,13 +17,17 @@ type
 
   HttpHandler* = proc(request: HttpRequest, response: var HttpResponse) {.gcsafe.}
 
-  WebSocketHandler* = proc(websocket: WebSocket)
+  WebSocketOpenHandler* = proc(websocket: WebSocket)
+  WebSocketMessageHandler = proc(websocket: WebSocket, kind: WsMsgKind, data: string)
+  WebSocketCloseHandler* = proc(websocket: WebSocket)
 
   HttpServer* = ref HttpServerObj
 
   HttpServerObj = object
     handler: HttpHandler
-    websocketHander: WebSocketHandler
+    openHandler: WebSocketOpenHandler
+    messageHandler: WebSocketMessageHandler
+    closeHandler: WebSocketCloseHandler
     maxHeadersLen, maxBodyLen: int
     workerThreads: seq[Thread[ptr HttpServerObj]]
     running: bool
@@ -67,7 +71,7 @@ type
     msgLen: int
 
   OutgoingBuffer = ref object
-    closeConnection, isCloseFrame: bool
+    closeConnection, isWebSocketUpgrade, isCloseFrame: bool
     buffer1, buffer2: string
     bytesSent: int
 
@@ -333,7 +337,8 @@ proc afterRecvWebSocket(
   clientSocket: SocketHandle,
   handleData: HandleData
 ): bool {.raises: [IOSelectorsException].} =
-  if epochTime() - handleData.closeFrameQueuedAt > 10:
+  if handleData.closeFrameQueuedAt > 0 and
+    epochTime() - handleData.closeFrameQueuedAt > 10:
     # The Close frame dance didn't work out, just close the connection
     return true
 
@@ -468,6 +473,7 @@ proc afterRecvWebSocket(
       # The message must be a text or binary message
 
       discard
+      echo "onMessage"
 
 
 
@@ -732,6 +738,9 @@ proc afterSend(
     totalBytes = outgoingBuffer.buffer1.len + outgoingBuffer.buffer2.len
   if outgoingBuffer.bytesSent == totalBytes:
     handleData.outgoingBuffers.shrink(1)
+    if outgoingBuffer.isWebSocketUpgrade:
+      discard # Trigger onOpen
+      echo "onOpen"
     if outgoingBuffer.isCloseFrame:
       handleData.closeFrameSent = true
     if outgoingBuffer.closeConnection:
@@ -769,6 +778,8 @@ proc loopForever(
 
             let outgoingBuffer = OutgoingBuffer()
             outgoingBuffer.closeConnection = encodedResponse.closeConnection
+            outgoingBuffer.isWebSocketUpgrade =
+              encodedResponse.isWebSocketUpgrade
             outgoingBuffer.buffer1 = move encodedResponse.buffer1
             outgoingBuffer.buffer2 = move encodedResponse.buffer2
             clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
@@ -913,6 +924,7 @@ proc loopForever(
         needClosing.add(clientSocket)
 
     for clientSocket in needClosing:
+      let handleData = server.selector.getData(clientSocket)
       try:
         server.selector.unregister(clientSocket)
       except:
@@ -921,6 +933,9 @@ proc loopForever(
         raise cast[ref IOSelectorsException](getCurrentException())
       clientSocket.close()
       server.clientSockets.excl(clientSocket)
+      if handleData.upgradedToWebSocket:
+        discard # Trigger onClose
+        echo "onClose"
 
 proc serve*(
   server: HttpServer,
@@ -1054,14 +1069,18 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [], gcsafe.} =
 
 proc newHttpServer*(
   handler: HttpHandler,
-  websocketHander: WebSocketHandler = nil,
+  openHandler: WebSocketOpenHandler,
+  messageHandler: WebSocketMessageHandler,
+  closeHandler: WebSocketCloseHandler,
   workerThreads = max(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
 ): HttpServer {.raises: [HttpServerError].} =
   result = HttpServer()
   result.handler = handler
-  result.websocketHander = websocketHander
+  result.openHandler = openHandler
+  result.messageHandler = messageHandler
+  result.closeHandler = closeHandler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.running = true
