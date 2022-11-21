@@ -774,8 +774,11 @@ proc loopForever(
                 continue
               # Are there any sends that were waiting for this response?
               if clientHandleData.sendsWaitingForUpgrade.len > 0:
-                if not clientHandleData.closeFrameQueued:
-                  for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
+                for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
+                  if clientHandleData.closeFrameQueued:
+                    discard # Drop this message
+                    # TODO: log?
+                  else:
                     let outgoingBuffer = OutgoingBuffer()
                     outgoingBuffer.buffer1 = move encodedFrame.buffer1
                     outgoingBuffer.buffer2 = move encodedFrame.buffer2
@@ -783,7 +786,6 @@ proc loopForever(
                     clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
                     if encodedFrame.isCloseFrame:
                       clientHandleData.closeFrameQueued = true
-                      break
                 clientHandleData.sendsWaitingForUpgrade.setLen(0)
 
         elif eventHandleData.handleKind == SendQueuedEvent:
@@ -797,7 +799,10 @@ proc loopForever(
 
             # Have we sent the upgrade response yet?
             if clientHandleData.upgradedToWebSocket:
-              if not clientHandleData.closeFrameQueued:
+              if clientHandleData.closeFrameQueued:
+                discard # Drop this message
+                # TODO: log?
+              else:
                 let outgoingBuffer = OutgoingBuffer()
                 outgoingBuffer.buffer1 = move encodedFrame.buffer1
                 outgoingBuffer.buffer2 = move encodedFrame.buffer2
