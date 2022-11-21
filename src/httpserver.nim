@@ -438,8 +438,9 @@ proc afterRecvWebSocket(
       of 0x2: # Binary
         msg.kind = BinaryMsg
       of 0x8: # Close
-        # If we already sent a close, just close the connection
-        if handleData.closeFrameSent:
+        # If we already queued a close, just close the connection
+        # This is not quite perfect
+        if handleData.closeFrameQueued:
           return true # Close the connection
         # Otherwise send a Close in response then close the connection
         if not handleData.closeFrameQueued:
