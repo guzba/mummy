@@ -38,13 +38,18 @@ type
     sendQueue: Deque[EncodedFrame]
     sendQueueLock: Lock
 
+  HandleKind = enum
+    ServerSocket, ClientSocket, ResponseQueuedEvent, SendQueuedEvent
+
   HandleData = ref object
+    handleKind: HandleKind
     recvBuffer: string
     bytesReceived: int
     requestState: IncomingRequestState
     msgState: IncomingWsMsgState
     outgoingPayloads: Deque[OutgoingPayloadState]
     upgradedToWebSocket, closeFrameSent: bool
+    sendsWaitingForUpgrade: seq[EncodedFrame]
 
   IncomingRequestState = object
     headersParsed, chunked: bool
@@ -159,6 +164,15 @@ proc updateHandle2(
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
+proc trigger2(
+  event: SelectEvent
+) {.raises: [].} =
+  try:
+    event.trigger()
+  except:
+    # TODO: EAGAIN vs other
+    echo "Triggering event failed"
+
 proc encodeFrameHeader(
   opcode: uint8,
   payloadLen: int
@@ -192,14 +206,25 @@ proc encodeFrameHeader(
 
 proc send*(
   websocket: WebSocket,
-  data: string,
+  data: sink string,
   kind = TextMsg,
 ) {.raises: [], gcsafe.} =
-  discard
+  let encodedFrame = EncodedFrame()
+  encodedFrame.clientSocket = websocket.clientSocket
 
-  # Encode it
-  # Queue it
-  # Trigger event
+  case kind:
+  of TextMsg:
+    encodedFrame.buffer1 = encodeFrameHeader(0x1, data.len)
+  of BinaryMsg:
+    encodedFrame.buffer1 = encodeFrameHeader(0x2, data.len)
+
+  encodedFrame.buffer2 = move data
+
+  acquire(websocket.server.sendQueueLock)
+  websocket.server.sendQueue.addLast(encodedFrame)
+  release(websocket.server.sendQueueLock)
+
+  websocket.server.sendQueued.trigger2()
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   discard
@@ -707,30 +732,69 @@ proc loopForever(
       # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
       if User in readyKey.events:
-        # This must be the responseReady event
-        acquire(server.responseQueueLock)
-        var encodedResponse = server.responseQueue.popFirst()
-        release(server.responseQueueLock)
+        let eventHandleData = server.selector.getData(readyKey.fd)
+        if eventHandleData.handleKind == ResponseQueuedEvent:
+          acquire(server.responseQueueLock)
+          let encodedResponse = server.responseQueue.popFirst()
+          release(server.responseQueueLock)
 
-        if encodedResponse.clientSocket in server.selector:
-          let handleData = server.selector.getData(encodedResponse.clientSocket)
+          if encodedResponse.clientSocket in server.selector:
+            let clientHandleData =
+              server.selector.getData(encodedResponse.clientSocket)
 
-          if encodedResponse.isWebSocketUpgrade:
-            handleData.upgradedToWebSocket = true
-            if handleData.bytesReceived > 0:
-              # Why have we received bytes when we are upgrading the connection?
-              needClosing.add(readyKey.fd.SocketHandle)
-              continue
+            let outgoingPayload = OutgoingPayloadState()
+            outgoingPayload.closeConnection = encodedResponse.closeConnection
+            outgoingPayload.buffer1 = move encodedResponse.buffer1
+            outgoingPayload.buffer2 = move encodedResponse.buffer2
+            clientHandleData.outgoingPayloads.addLast(outgoingPayload)
+            server.selector.updateHandle2(
+              encodedResponse.clientSocket,
+              {Read, Write}
+            )
 
-          let outgoingPayload = OutgoingPayloadState()
-          outgoingPayload.closeConnection = encodedResponse.closeConnection
-          outgoingPayload.buffer1 = move encodedResponse.buffer1
-          outgoingPayload.buffer2 = move encodedResponse.buffer2
-          handleData.outgoingPayloads.addLast(outgoingPayload)
-          server.selector.updateHandle2(
-            encodedResponse.clientSocket,
-            {Read, Write}
-          )
+            if encodedResponse.isWebSocketUpgrade:
+              clientHandleData.upgradedToWebSocket = true
+              if clientHandleData.bytesReceived > 0:
+                # Why have we received bytes when we are upgrading the connection?
+                needClosing.add(readyKey.fd.SocketHandle)
+                clientHandleData.sendsWaitingForUpgrade.setLen(0)
+                continue
+              # Are there any sends that were waiting for this response?
+              if clientHandleData.sendsWaitingForUpgrade.len > 0:
+                for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
+                  let outgoingPayload = OutgoingPayloadState()
+                  outgoingPayload.buffer1 = move encodedFrame.buffer1
+                  outgoingPayload.buffer2 = move encodedFrame.buffer2
+                  clientHandleData.outgoingPayloads.addLast(outgoingPayload)
+                clientHandleData.sendsWaitingForUpgrade.setLen(0)
+                server.selector.updateHandle2(
+                  encodedResponse.clientSocket,
+                  {Read, Write}
+                )
+
+        elif eventHandleData.handleKind == SendQueuedEvent:
+          acquire(server.responseQueueLock)
+          let encodedFrame = server.sendQueue.popFirst()
+          release(server.responseQueueLock)
+
+          if encodedFrame.clientSocket in server.selector:
+            let clientHandleData =
+              server.selector.getData(encodedFrame.clientSocket)
+
+            # Have we sent the upgrade response yet?
+            if clientHandleData.upgradedToWebSocket:
+              let outgoingPayload = OutgoingPayloadState()
+              outgoingPayload.buffer1 = move encodedFrame.buffer1
+              outgoingPayload.buffer2 = move encodedFrame.buffer2
+              clientHandleData.outgoingPayloads.addLast(outgoingPayload)
+              server.selector.updateHandle2(
+                encodedFrame.clientSocket,
+                {Read, Write}
+              )
+            else:
+              # If we haven't, queue this to wait for the upgrade response
+              clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
+
         continue
 
       if readyKey.fd == server.socket.int:
@@ -743,6 +807,7 @@ proc loopForever(
           server.clientSockets.incl(clientSocket)
 
           let handleData = HandleData()
+          handleData.handleKind = ClientSocket
           handleData.recvBuffer.setLen(initialRecvBufferLen)
           server.selector.registerHandle(clientSocket, {Read}, handleData)
       else:
@@ -854,9 +919,18 @@ proc serve*(
       raiseOSError(osLastError())
 
     server.selector = newSelector[HandleData]()
-    server.selector.registerEvent(server.responseQueued, nil)
-    server.selector.registerEvent(server.sendQueued, nil)
-    server.selector.registerHandle(server.socket, {Read}, nil)
+
+    let serverData = HandleData()
+    serverData.handleKind = ServerSocket
+    server.selector.registerHandle(server.socket, {Read}, serverData)
+
+    let responseQueuedData = HandleData()
+    responseQueuedData.handleKind = ResponseQueuedEvent
+    server.selector.registerEvent(server.responseQueued, responseQueuedData)
+
+    let sendQueuedData = HandleData()
+    sendQueuedData.handleKind = SendQueuedEvent
+    server.selector.registerEvent(server.sendQueued, sendQueuedData)
   except:
     if server.selector != nil:
       try:
@@ -942,12 +1016,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
     server.responseQueue.addLast(move encodedResponse)
     release(server.responseQueueLock)
 
-    try:
-      server.responseQueued.trigger()
-    except:
-      echo "UHH????", getCurrentExceptionMsg()
-
-
+    server.responseQueued.trigger2()
 
 proc newHttpServer*(
   handler: HttpHandler,
