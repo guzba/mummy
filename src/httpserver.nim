@@ -48,7 +48,7 @@ type
     requestState: IncomingRequestState
     msgState: IncomingWsMsgState
     outgoingBuffers: Deque[OutgoingBuffer]
-    upgradedToWebSocket, closeFrameSent: bool
+    upgradedToWebSocket, closeFrameQueued, closeFrameSent: bool
     sendsWaitingForUpgrade: seq[EncodedFrame]
 
   IncomingRequestState = object
@@ -65,7 +65,7 @@ type
     msgLen: int
 
   OutgoingBuffer = ref object
-    closeConnection: bool
+    closeConnection, isCloseFrame: bool
     buffer1, buffer2: string
     bytesSent: int
 
@@ -314,9 +314,10 @@ proc sendCloseMsg(
 ) {.raises: [IOSelectorsException].} =
   let outgoingBuffer = OutgoingBuffer()
   outgoingBuffer.buffer1 = encodeFrameHeader(0x8, 0)
+  outgoingBuffer.isCloseFrame = true
   outgoingBuffer.closeConnection = closeConnection
   handleData.outgoingBuffers.addLast(outgoingBuffer)
-  handleData.closeFrameSent = true
+  handleData.closeFrameQueued = true
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc afterRecvWebSocket(
@@ -441,7 +442,8 @@ proc afterRecvWebSocket(
         if handleData.closeFrameSent:
           return true # Close the connection
         # Otherwise send a Close in response then close the connection
-        server.sendCloseMsg(clientSocket, handleData, true)
+        if not handleData.closeFrameQueued:
+          server.sendCloseMsg(clientSocket, handleData, true)
         continue
       of 0x9: # Ping
         server.sendPongMsg(clientSocket, handleData)
@@ -718,6 +720,8 @@ proc afterSend(
     totalBytes = outgoingBuffer.buffer1.len + outgoingBuffer.buffer2.len
   if outgoingBuffer.bytesSent == totalBytes:
     handleData.outgoingBuffers.shrink(1)
+    if outgoingBuffer.isCloseFrame:
+      handleData.closeFrameSent = true
     if outgoingBuffer.closeConnection:
       return true
   if handleData.outgoingBuffers.len == 0:
@@ -770,11 +774,16 @@ proc loopForever(
                 continue
               # Are there any sends that were waiting for this response?
               if clientHandleData.sendsWaitingForUpgrade.len > 0:
-                for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
-                  let outgoingBuffer = OutgoingBuffer()
-                  outgoingBuffer.buffer1 = move encodedFrame.buffer1
-                  outgoingBuffer.buffer2 = move encodedFrame.buffer2
-                  clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
+                if not clientHandleData.closeFrameQueued:
+                  for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
+                    let outgoingBuffer = OutgoingBuffer()
+                    outgoingBuffer.buffer1 = move encodedFrame.buffer1
+                    outgoingBuffer.buffer2 = move encodedFrame.buffer2
+                    outgoingBuffer.isCloseFrame = encodedFrame.isCloseFrame
+                    clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
+                    if encodedFrame.isCloseFrame:
+                      clientHandleData.closeFrameQueued = true
+                      break
                 clientHandleData.sendsWaitingForUpgrade.setLen(0)
 
         elif eventHandleData.handleKind == SendQueuedEvent:
@@ -788,14 +797,18 @@ proc loopForever(
 
             # Have we sent the upgrade response yet?
             if clientHandleData.upgradedToWebSocket:
-              let outgoingBuffer = OutgoingBuffer()
-              outgoingBuffer.buffer1 = move encodedFrame.buffer1
-              outgoingBuffer.buffer2 = move encodedFrame.buffer2
-              clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
-              server.selector.updateHandle2(
-                encodedFrame.clientSocket,
-                {Read, Write}
-              )
+              if not clientHandleData.closeFrameQueued:
+                let outgoingBuffer = OutgoingBuffer()
+                outgoingBuffer.buffer1 = move encodedFrame.buffer1
+                outgoingBuffer.buffer2 = move encodedFrame.buffer2
+                outgoingBuffer.isCloseFrame = encodedFrame.isCloseFrame
+                clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
+                if encodedFrame.isCloseFrame:
+                  clientHandleData.closeFrameQueued = true
+                server.selector.updateHandle2(
+                  encodedFrame.clientSocket,
+                  {Read, Write}
+                )
             else:
               # If we haven't, queue this to wait for the upgrade response
               clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
