@@ -1,5 +1,6 @@
 import std/base64, std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
-    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/times
+    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/times,
+    std/hashes
 
 export Port
 
@@ -108,14 +109,20 @@ type
     kind: WsMsgKind
     data: string
 
-# proc `$`*(request: HttpRequest) =
+# proc `$`*(request: HttpRequest): string =
 #   discard
 
-# proc `$`*(response: var HttpResponse) =
+# proc `$`*(response: var HttpResponse): string =
 #   discard
 
-# proc `$`*(websocket: WebSocket) =
-#   discard
+proc `$`*(websocket: WebSocket): string =
+  "WebSocket " & $websocket.clientSocket.int
+
+proc hash*(websocket: WebSocket): Hash =
+  var h: Hash
+  h = h !& hash(websocket.server)
+  h = h !& hash(websocket.clientSocket)
+  return !$h
 
 template currentExceptionAsHttpServerError(): untyped =
   let e = getCurrentException()
