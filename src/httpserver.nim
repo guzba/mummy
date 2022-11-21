@@ -1064,9 +1064,9 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [], gcsafe.} =
 
 proc newHttpServer*(
   handler: HttpHandler,
-  openHandler: WebSocketOpenHandler,
-  messageHandler: WebSocketMessageHandler,
-  closeHandler: WebSocketCloseHandler,
+  openHandler: WebSocketOpenHandler = nil,
+  messageHandler: WebSocketMessageHandler = nil,
+  closeHandler: WebSocketCloseHandler = nil,
   workerThreads = max(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
