@@ -47,7 +47,7 @@ type
     bytesReceived: int
     requestState: IncomingRequestState
     msgState: IncomingWsMsgState
-    outgoingPayloads: Deque[OutgoingPayloadState]
+    outgoingBuffers: Deque[OutgoingBuffer]
     upgradedToWebSocket, closeFrameSent: bool
     sendsWaitingForUpgrade: seq[EncodedFrame]
 
@@ -64,7 +64,7 @@ type
     buffer: string
     msgLen: int
 
-  OutgoingPayloadState = ref object
+  OutgoingBuffer = ref object
     closeConnection: bool
     buffer1, buffer2: string
     bytesSent: int
@@ -227,7 +227,16 @@ proc send*(
   websocket.server.sendQueued.trigger2()
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
-  discard
+  let encodedFrame = EncodedFrame()
+  encodedFrame.clientSocket = websocket.clientSocket
+  encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
+  encodedFrame.isCloseFrame = true
+
+  acquire(websocket.server.sendQueueLock)
+  websocket.server.sendQueue.addLast(encodedFrame)
+  release(websocket.server.sendQueueLock)
+
+  websocket.server.sendQueued.trigger2()
 
 proc websocketUpgrade*(
   request: HttpRequest,
@@ -292,9 +301,9 @@ proc sendPongMsg(
   clientSocket: SocketHandle,
   handleData: HandleData
 ) {.raises: [IOSelectorsException].} =
-  let outgoingPayload = OutgoingPayloadState()
-  outgoingPayload.buffer1 = encodeFrameHeader(0xA, 0)
-  handleData.outgoingPayloads.addLast(outgoingPayload)
+  let outgoingBuffer = OutgoingBuffer()
+  outgoingBuffer.buffer1 = encodeFrameHeader(0xA, 0)
+  handleData.outgoingBuffers.addLast(outgoingBuffer)
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc sendCloseMsg(
@@ -303,10 +312,10 @@ proc sendCloseMsg(
   handleData: HandleData,
   closeConnection: bool
 ) {.raises: [IOSelectorsException].} =
-  let outgoingPayload = OutgoingPayloadState()
-  outgoingPayload.buffer1 = encodeFrameHeader(0x8, 0)
-  outgoingPayload.closeConnection = closeConnection
-  handleData.outgoingPayloads.addLast(outgoingPayload)
+  let outgoingBuffer = OutgoingBuffer()
+  outgoingBuffer.buffer1 = encodeFrameHeader(0x8, 0)
+  outgoingBuffer.closeConnection = closeConnection
+  handleData.outgoingBuffers.addLast(outgoingBuffer)
   handleData.closeFrameSent = true
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
@@ -705,13 +714,13 @@ proc afterSend(
   handleData: HandleData
 ): bool {.raises: [IOSelectorsException].} =
   let
-    outgoingPayload = handleData.outgoingPayloads.peekFirst()
-    totalBytes = outgoingPayload.buffer1.len + outgoingPayload.buffer2.len
-  if outgoingPayload.bytesSent == totalBytes:
-    handleData.outgoingPayloads.shrink(1)
-    if outgoingPayload.closeConnection:
+    outgoingBuffer = handleData.outgoingBuffers.peekFirst()
+    totalBytes = outgoingBuffer.buffer1.len + outgoingBuffer.buffer2.len
+  if outgoingBuffer.bytesSent == totalBytes:
+    handleData.outgoingBuffers.shrink(1)
+    if outgoingBuffer.closeConnection:
       return true
-  if handleData.outgoingPayloads.len == 0:
+  if handleData.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
 proc loopForever(
@@ -742,11 +751,11 @@ proc loopForever(
             let clientHandleData =
               server.selector.getData(encodedResponse.clientSocket)
 
-            let outgoingPayload = OutgoingPayloadState()
-            outgoingPayload.closeConnection = encodedResponse.closeConnection
-            outgoingPayload.buffer1 = move encodedResponse.buffer1
-            outgoingPayload.buffer2 = move encodedResponse.buffer2
-            clientHandleData.outgoingPayloads.addLast(outgoingPayload)
+            let outgoingBuffer = OutgoingBuffer()
+            outgoingBuffer.closeConnection = encodedResponse.closeConnection
+            outgoingBuffer.buffer1 = move encodedResponse.buffer1
+            outgoingBuffer.buffer2 = move encodedResponse.buffer2
+            clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
             server.selector.updateHandle2(
               encodedResponse.clientSocket,
               {Read, Write}
@@ -762,15 +771,11 @@ proc loopForever(
               # Are there any sends that were waiting for this response?
               if clientHandleData.sendsWaitingForUpgrade.len > 0:
                 for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
-                  let outgoingPayload = OutgoingPayloadState()
-                  outgoingPayload.buffer1 = move encodedFrame.buffer1
-                  outgoingPayload.buffer2 = move encodedFrame.buffer2
-                  clientHandleData.outgoingPayloads.addLast(outgoingPayload)
+                  let outgoingBuffer = OutgoingBuffer()
+                  outgoingBuffer.buffer1 = move encodedFrame.buffer1
+                  outgoingBuffer.buffer2 = move encodedFrame.buffer2
+                  clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
                 clientHandleData.sendsWaitingForUpgrade.setLen(0)
-                server.selector.updateHandle2(
-                  encodedResponse.clientSocket,
-                  {Read, Write}
-                )
 
         elif eventHandleData.handleKind == SendQueuedEvent:
           acquire(server.responseQueueLock)
@@ -783,10 +788,10 @@ proc loopForever(
 
             # Have we sent the upgrade response yet?
             if clientHandleData.upgradedToWebSocket:
-              let outgoingPayload = OutgoingPayloadState()
-              outgoingPayload.buffer1 = move encodedFrame.buffer1
-              outgoingPayload.buffer2 = move encodedFrame.buffer2
-              clientHandleData.outgoingPayloads.addLast(outgoingPayload)
+              let outgoingBuffer = OutgoingBuffer()
+              outgoingBuffer.buffer1 = move encodedFrame.buffer1
+              outgoingBuffer.buffer2 = move encodedFrame.buffer2
+              clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
               server.selector.updateHandle2(
                 encodedFrame.clientSocket,
                 {Read, Write}
@@ -836,24 +841,24 @@ proc loopForever(
 
         if Write in readyKey.events:
           let
-            outgoingPayload = handleData.outgoingPayloads.peekFirst()
+            outgoingBuffer = handleData.outgoingBuffers.peekFirst()
             bytesSent =
-              if outgoingPayload.bytesSent < outgoingPayload.buffer1.len:
+              if outgoingBuffer.bytesSent < outgoingBuffer.buffer1.len:
                 readyKey.fd.SocketHandle.send(
-                  outgoingPayload.buffer1[outgoingPayload.bytesSent].addr,
-                  outgoingPayload.buffer1.len - outgoingPayload.bytesSent,
+                  outgoingBuffer.buffer1[outgoingBuffer.bytesSent].addr,
+                  outgoingBuffer.buffer1.len - outgoingBuffer.bytesSent,
                   0
                 )
               else:
                 let buffer2Pos =
-                  outgoingPayload.bytesSent - outgoingPayload.buffer1.len
+                  outgoingBuffer.bytesSent - outgoingBuffer.buffer1.len
                 readyKey.fd.SocketHandle.send(
-                  outgoingPayload.buffer2[buffer2Pos].addr,
-                  outgoingPayload.buffer2.len - buffer2Pos,
+                  outgoingBuffer.buffer2[buffer2Pos].addr,
+                  outgoingBuffer.buffer2.len - buffer2Pos,
                   0
                 )
           if bytesSent > 0:
-            outgoingPayload.bytesSent += bytesSent
+            outgoingBuffer.bytesSent += bytesSent
             sentTo.add(readyKey.fd.SocketHandle)
           else:
             needClosing.add(readyKey.fd.SocketHandle)
