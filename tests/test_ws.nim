@@ -11,13 +11,13 @@ proc serverProc() =
     ws.send("Second", BinaryMsg)
 
   proc onOpen(websocket: httpserver.WebSocket) =
-    discard
+    echo "onOpen"
 
   proc onMessage(websocket: httpserver.WebSocket, kind: WsMsgKind, data: string) =
-    discard
+    echo "onMessage"
 
   proc onClose(websocket: httpserver.WebSocket) =
-    discard
+    echo "onClose"
 
   let server = newHttpServer(handler, onOpen, onMessage, onClose)
   server.serve(Port(8081))
