@@ -3,6 +3,8 @@ import httpserver, std/asyncdispatch, std/os, ws
 var serverThread: Thread[void]
 
 proc serverProc() =
+  ## Runs the server in a thread
+
   proc handler(request: HttpRequest, response: var HttpResponse) =
     let ws = request.websocketUpgrade(response)
     ws.send("ASDF")

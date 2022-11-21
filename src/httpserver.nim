@@ -326,6 +326,10 @@ proc afterRecvWebSocket(
   clientSocket: SocketHandle,
   handleData: HandleData
 ): bool {.raises: [IOSelectorsException].} =
+  if epochTime() - handleData.closeFrameQueuedAt > 10:
+    # The Close frame dance didn't work out, just close the connection
+    return true
+
   # Try to parse entire frames out of the receive buffer
   while true:
     if handleData.bytesReceived < 2:
@@ -842,11 +846,6 @@ proc loopForever(
         let handleData = server.selector.getData(readyKey.fd)
 
         if Read in readyKey.events:
-          if epochTime() - handleData.closeFrameQueuedAt > 10:
-            # The Close frame dance didn't work out, just close the connection
-            needClosing.add(readyKey.fd.SocketHandle)
-            continue
-
           # Expand the buffer if it is full
           if handleData.bytesReceived == handleData.recvBuffer.len:
             handleData.recvBuffer.setLen(handleData.recvBuffer.len * 2)
