@@ -14,7 +14,7 @@ type
   HttpVersion* = enum
     Http10, Http11
 
-  HttpHandler* = proc(request: HttpRequest, response: var HttpResponse)
+  HttpHandler* = proc(request: HttpRequest, response: var HttpResponse) {.gcsafe.}
 
   WebSocketHandler* = proc(websocket: WebSocket)
 
@@ -953,7 +953,7 @@ proc serve*(
     server.socket.close()
     raise currentExceptionAsHttpServerError()
 
-proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
+proc workerProc(server: ptr HttpServerObj) {.raises: [], gcsafe.} =
   while true:
     acquire(server.requestQueueLock)
 
@@ -985,8 +985,7 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [].} =
 
     var response: HttpResponse
     try:
-      {.gcsafe.}: # lol
-        server.handler(request, response)
+      server.handler(request, response)
     except:
       # TODO: log?
       response = HttpResponse()
