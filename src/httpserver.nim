@@ -1,6 +1,6 @@
 import std/base64, std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/times,
-    std/hashes
+    std/hashes, std/tables
 
 export Port
 
@@ -17,9 +17,9 @@ type
 
   HttpHandler* = proc(request: HttpRequest, response: var HttpResponse) {.gcsafe.}
 
-  WebSocketOpenHandler* = proc(websocket: WebSocket)
-  WebSocketMessageHandler = proc(websocket: WebSocket, kind: WsMsgKind, data: string)
-  WebSocketCloseHandler* = proc(websocket: WebSocket)
+  WebSocketOpenHandler* = proc(websocket: WebSocket) {.gcsafe.}
+  WebSocketMessageHandler = proc(websocket: WebSocket, kind: WsMsgKind, data: string) {.gcsafe.}
+  WebSocketCloseHandler* = proc(websocket: WebSocket) {.gcsafe.}
 
   HttpServer* = ref HttpServerObj
 
@@ -42,10 +42,12 @@ type
     responseQueueLock: Lock
     sendQueue: Deque[EncodedFrame]
     sendQueueLock: Lock
+    websocketQueues: Table[WebSocket, Deque[WebSocketEvent]]
+    websocketQueuesLock: Lock
 
   WorkerTask = object
     request: HttpRequest
-    event: WebSocketEvent
+    websocket: WebSocket
 
   HandleKind = enum
     ServerSocket, ClientSocket, ResponseQueuedEvent, SendQueuedEvent
@@ -113,16 +115,13 @@ type
   WsMsgKind* = enum
     TextMsg, BinaryMsg
 
-  WsMsg* = ref object
-    kind: WsMsgKind
-    data: string
-
   WebSocketEventKind = enum
-    WebSocketOpen, WebSocketMessage, WebSocketClose
+    OpenEvent, MessageEvent, CloseEvent
 
-  WebSocketEvent = object
+  WebSocketEvent = ref object
     kind: WebSocketEventKind
-    message: WsMsg
+    msgKind: WsMsgKind
+    msg: string
 
 # proc `$`*(request: HttpRequest): string =
 #   discard
@@ -305,11 +304,35 @@ proc websocketUpgrade*(
   response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
   response.isWebSocketUpgrade = true
 
-proc popWsMsg(handleData: HandleData): WsMsg {.raises: [].} =
+proc enqueueWebSocketEvent(
+  websocket: WebSocket,
+  event: WebSocketEvent
+) {.raises: [].} =
+  var needsWorkQueueEntry: bool
+
+  acquire(websocket.server.websocketQueuesLock)
+  if websocket in websocket.server.websocketQueues:
+    try:
+      websocket.server.websocketQueues[websocket].addLast(event)
+    except KeyError:
+      discard
+  else:
+    var queue: Deque[WebSocketEvent]
+    queue.addLast(event)
+    websocket.server.websocketQueues[websocket] = move queue
+    needsWorkQueueEntry = true
+  release(websocket.server.websocketQueuesLock)
+
+  if needsWorkQueueEntry:
+    acquire(websocket.server.workerQueueLock)
+    websocket.server.workerQueue.addLast(WorkerTask(websocket: websocket))
+    release(websocket.server.workerQueueLock)
+    signal(websocket.server.workerQueueCond)
+
+proc popWsMsg(handleData: HandleData): string {.raises: [].} =
   ## Pops the completed WsMsg from the socket and resets the parse state.
-  result = WsMsg()
-  result.data = move handleData.msgState.buffer
-  result.data.setLen(handleData.msgState.msgLen)
+  result = move handleData.msgState.buffer
+  result.setLen(handleData.msgState.msgLen)
   handleData.msgState = IncomingWsMsgState()
 
 proc sendPongMsg(
@@ -451,13 +474,28 @@ proc afterRecvWebSocket(
         return true # Invalid frame, close the connection
 
       # We have a full message
-      let msg = handleData.popWsMsg()
+      var msg = handleData.popWsMsg()
+
+      let websocket = WebSocket(
+        server: cast[ptr HttpServerObj](server),
+        clientSocket: clientSocket
+      )
 
       case opcode:
       of 0x1: # Text
-        msg.kind = TextMsg
+        let event = WebSocketEvent(
+          kind: MessageEvent,
+          msgKind: TextMsg,
+          msg: move msg
+        )
+        websocket.enqueueWebSocketEvent(event)
       of 0x2: # Binary
-        msg.kind = BinaryMsg
+        let event = WebSocketEvent(
+          kind: MessageEvent,
+          msgKind: BinaryMsg,
+          msg: move msg
+        )
+        websocket.enqueueWebSocketEvent(event)
       of 0x8: # Close
         # If we already queued a close, just close the connection
         # This is not quite perfect
@@ -473,10 +511,6 @@ proc afterRecvWebSocket(
         continue
       else:
         return true # Invalid opcode, close the connection
-
-      # The message must be a text or binary message
-
-      echo "onMessage"
 
 proc encodeHeaders(response: var HttpResponse): string {.raises: [], gcsafe.} =
   let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
@@ -740,7 +774,14 @@ proc afterSend(
   if outgoingBuffer.bytesSent == totalBytes:
     handleData.outgoingBuffers.shrink(1)
     if outgoingBuffer.isWebSocketUpgrade:
-      echo "onOpen"
+      let
+        websocket = WebSocket(
+          server: cast[ptr HttpServerObj](server),
+          clientSocket: clientSocket
+        )
+        event = WebSocketEvent(kind: OpenEvent)
+      websocket.enqueueWebSocketEvent(event)
+
     if outgoingBuffer.isCloseFrame:
       handleData.closeFrameSent = true
     if outgoingBuffer.closeConnection:
@@ -934,7 +975,13 @@ proc loopForever(
       clientSocket.close()
       server.clientSockets.excl(clientSocket)
       if handleData.upgradedToWebSocket:
-        echo "onClose"
+        let
+          websocket = WebSocket(
+            server: cast[ptr HttpServerObj](server),
+            clientSocket: clientSocket
+          )
+          event = WebSocketEvent(kind: CloseEvent)
+        websocket.enqueueWebSocketEvent(event)
 
 proc serve*(
   server: HttpServer,
@@ -1056,11 +1103,41 @@ proc workerProc(server: ptr HttpServerObj) {.raises: [], gcsafe.} =
       encodedResponse.buffer2 = move response.body
       encodedResponse.isWebSocketUpgrade = response.isWebSocketUpgrade
 
-      acquire(server.workerQueueLock)
+      acquire(server.responseQueueLock)
       server.responseQueue.addLast(move encodedResponse)
-      release(server.workerQueueLock)
+      release(server.responseQueueLock)
 
       server.responseQueued.trigger2()
+    else: # WebSocket
+      while true: # Process the entire websocket queue
+        var event: WebSocketEvent
+        acquire(server.websocketQueuesLock)
+        if task.websocket in server.websocketQueues:
+          try:
+            if server.websocketQueues[task.websocket].len > 0:
+              event = server.websocketQueues[task.websocket].popFirst()
+            else:
+              server.websocketQueues.del(task.websocket)
+          except KeyError:
+            discard
+        release(server.websocketQueuesLock)
+        if event == nil:
+          break
+
+        try:
+          case event.kind:
+          of OpenEvent:
+            if server.openHandler != nil:
+              server.openHandler(task.websocket)
+          of MessageEvent:
+            if server.messageHandler != nil:
+              server.messageHandler(task.websocket, event.msgKind, move event.msg)
+          of CloseEvent:
+            if server.closeHandler != nil:
+              server.closeHandler(task.websocket)
+        except:
+          # TODO: log?
+          echo getCurrentExceptionMsg()
 
 proc newHttpServer*(
   handler: HttpHandler,
@@ -1071,6 +1148,9 @@ proc newHttpServer*(
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
 ): HttpServer {.raises: [HttpServerError].} =
+  if handler == nil:
+    raise newException(HttpServerError, "The request handler must not be nil")
+
   result = HttpServer()
   result.handler = handler
   result.openHandler = openHandler
@@ -1078,11 +1158,14 @@ proc newHttpServer*(
   result.closeHandler = closeHandler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
-  result.running = true
+
   initLock(result.workerQueueLock)
   initCond(result.workerQueueCond)
   initLock(result.responseQueueLock)
   initLock(result.sendQueueLock)
+  initLock(result.websocketQueuesLock)
+
+  result.running = true
   result.workerThreads.setLen(workerThreads)
 
   try:
@@ -1102,6 +1185,7 @@ proc newHttpServer*(
     deinitCond(result.workerQueueCond)
     deinitLock(result.responseQueueLock)
     deinitLock(result.sendQueueLock)
+    deinitLock(result.websocketQueuesLock)
     try:
       result.responseQueued.close()
     except:
