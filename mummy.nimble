@@ -8,5 +8,4 @@ srcDir = "src"
 requires "nim >= 1.6.8"
 requires "zippy >= 0.10.4"
 
-before test:
-  requires "ws >= 0.5.0"
+taskRequires "test", "ws >= 0.5.0"
