@@ -1,4 +1,4 @@
-import mummy, httpclient, std/os
+import httpclient, mummy, std/os
 
 proc handler(request: Request) =
   case request.uri:
