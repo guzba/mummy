@@ -1,6 +1,7 @@
 import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
     std/hashes, std/locks, std/nativesockets, std/os, std/parseutils,
-    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times
+    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
+    zippy
 
 export Port, common
 
@@ -275,6 +276,27 @@ proc respond*(
     headers["Connection"] = "close"
   elif request.httpVersion == Http10 or "Connection" notin headers:
     headers["Connection"] = "keep-alive"
+
+  if body.len > 128: # If the body is big enough to justify compressing
+    if request.headers.headerContainsToken("Accept-Encoding", "gzip"):
+      try:
+        body = compress(body.cstring, body.len, BestSpeed, dfGzip)
+      except:
+        # This should never happen since exceptions are only thrown if
+        # the data format is invalid or the level is invalid
+        # TODO: log?
+        return
+      headers["Content-Encoding"] = "gzip"
+    elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
+      try:
+        body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
+      except:
+        # See gzip
+        # TODO: log?
+        return
+      headers["Content-Encoding"] = "deflate"
+    else:
+      discard
 
   headers["Content-Length"] = $body.len
 
