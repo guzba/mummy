@@ -13,8 +13,8 @@ proc handler(request: Request) =
 
 proc websocketHandler(
   websocket: mummy.WebSocket,
-  event: WebSocketEventKind,
-  message: WebSocketMessage
+  event: WebSocketEvent,
+  message: Message
 ) =
   case event:
   of OpenEvent:

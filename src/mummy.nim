@@ -34,11 +34,11 @@ type
     server: Server
     clientSocket: SocketHandle
 
-  WebSocketMessage* = object
+  Message* = object
     kind*: MessageKind
     data*: string
 
-  WebSocketEventKind* = enum
+  WebSocketEvent* = enum
     OpenEvent, MessageEvent, ErrorEvent, CloseEvent
 
   MessageKind* = enum
@@ -46,8 +46,8 @@ type
 
   WebSocketHandler* = proc(
     websocket: WebSocket,
-    event: WebSocketEventKind,
-    message: WebSocketMessage
+    event: WebSocketEvent,
+    message: Message
   ) {.gcsafe.}
 
   ServerObj = object
@@ -67,7 +67,7 @@ type
     responseQueueLock: Lock
     sendQueue: Deque[EncodedFrame]
     sendQueueLock: Lock
-    websocketQueues: Table[WebSocket, Deque[WebSocketEvent]]
+    websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
     websocketQueuesLock: Lock
 
   Server* = ptr ServerObj
@@ -115,9 +115,9 @@ type
     isCloseFrame: bool
     buffer1, buffer2: string
 
-  WebSocketEvent {.acyclic.} = ref object
-    event: WebSocketEventKind
-    message: WebSocketMessage
+  WebSocketUpdate {.acyclic.} = ref object
+    event: WebSocketEvent
+    message: Message
 
 proc `$`*(request: Request): string =
   result = request.httpMethod & " " & request.uri & " "
@@ -193,25 +193,25 @@ proc workerProc(server: Server) =
       deallocShared(task.request)
     else: # WebSocket
       while true: # Process the entire websocket queue
-        var event: WebSocketEvent
+        var update: WebSocketUpdate
         acquire(server.websocketQueuesLock)
         if task.websocket in server.websocketQueues:
           try:
             if server.websocketQueues[task.websocket].len > 0:
-              event = server.websocketQueues[task.websocket].popFirst()
+              update = server.websocketQueues[task.websocket].popFirst()
             else:
               server.websocketQueues.del(task.websocket)
           except KeyError:
             discard
         release(server.websocketQueuesLock)
-        if event == nil:
+        if update == nil:
           break
 
         try:
           server.websocketHandler(
             task.websocket,
-            event.event,
-            move event.message
+            update.event,
+            move update.message
           )
         except:
           # TODO: log?
@@ -365,9 +365,15 @@ proc upgradeToWebSocket*(
 
   request.respond(101, headers, "")
 
-proc enqueueWebSocketEvent(
+proc dispatchTask(server: Server, task: WorkerTask) {.raises: [].} =
+  acquire(server.workerQueueLock)
+  server.workerQueue.addLast(task)
+  release(server.workerQueueLock)
+  signal(server.workerQueueCond)
+
+proc dispatchWebSocketUpdate(
   websocket: WebSocket,
-  event: WebSocketEvent
+  update: WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
     # TODO: log?
@@ -378,21 +384,18 @@ proc enqueueWebSocketEvent(
   acquire(websocket.server.websocketQueuesLock)
   if websocket in websocket.server.websocketQueues:
     try:
-      websocket.server.websocketQueues[websocket].addLast(event)
+      websocket.server.websocketQueues[websocket].addLast(update)
     except KeyError:
       assert false # Notice this when not a release build
   else:
-    var queue: Deque[WebSocketEvent]
-    queue.addLast(event)
+    var queue: Deque[WebSocketUpdate]
+    queue.addLast(update)
     websocket.server.websocketQueues[websocket] = move queue
     needsWorkQueueEntry = true
   release(websocket.server.websocketQueuesLock)
 
   if needsWorkQueueEntry:
-    acquire(websocket.server.workerQueueLock)
-    websocket.server.workerQueue.addLast(WorkerTask(websocket: websocket))
-    release(websocket.server.workerQueueLock)
-    signal(websocket.server.workerQueueCond)
+    websocket.server.dispatchTask(WorkerTask(websocket: websocket))
 
 proc sendCloseFrame(
   server: Server,
@@ -525,7 +528,7 @@ proc afterRecvWebSocket(
 
       # We have a full message
 
-      var message: WebSocketMessage
+      var message: Message
       message.data = move handleData.frameState.buffer
       message.data.setLen(handleData.frameState.frameLen)
 
@@ -557,12 +560,12 @@ proc afterRecvWebSocket(
           server: server,
           clientSocket: clientSocket
         )
-        event = WebSocketEvent(
+        update = WebSocketUpdate(
           event: MessageEvent,
           message: move message
         )
 
-      websocket.enqueueWebSocketEvent(event)
+      websocket.dispatchWebSocketUpdate(update)
 
 proc popRequest(
   server: Server,
@@ -746,10 +749,7 @@ proc afterRecvHttp(
 
       if chunkLen == 0:
         let request = server.popRequest(clientSocket, handleData)
-        acquire(server.workerQueueLock)
-        server.workerQueue.addLast(WorkerTask(request: request))
-        release(server.workerQueueLock)
-        signal(server.workerQueueCond)
+        server.dispatchTask(WorkerTask(request: request))
         return false
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
@@ -780,10 +780,7 @@ proc afterRecvHttp(
     handleData.bytesReceived = bytesRemaining
 
     let request = server.popRequest(clientSocket, handleData)
-    acquire(server.workerQueueLock)
-    server.workerQueue.addLast(WorkerTask(request: request))
-    release(server.workerQueueLock)
-    signal(server.workerQueueCond)
+    server.dispatchTask(WorkerTask(request: request))
 
 proc afterRecv(
   server: Server,
@@ -813,8 +810,8 @@ proc afterSend(
           server: server,
           clientSocket: clientSocket
         )
-        event = WebSocketEvent(event: OpenEvent)
-      websocket.enqueueWebSocketEvent(event)
+        update = WebSocketUpdate(event: OpenEvent)
+      websocket.dispatchWebSocketUpdate(update)
 
     if outgoingBuffer.isCloseFrame:
       handleData.closeFrameSent = true
@@ -1054,10 +1051,10 @@ proc loopForever(
       if handleData.upgradedToWebSocket:
         let websocket = WebSocket(server: server, clientSocket: clientSocket)
         if not handleData.closeFrameSent:
-          let error = WebSocketEvent(event: ErrorEvent)
-          websocket.enqueueWebSocketEvent(error)
-        let close = WebSocketEvent(event: CloseEvent)
-        websocket.enqueueWebSocketEvent(close)
+          let error = WebSocketUpdate(event: ErrorEvent)
+          websocket.dispatchWebSocketUpdate(error)
+        let close = WebSocketUpdate(event: CloseEvent)
+        websocket.dispatchWebSocketUpdate(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
   server.shutdown.trigger2()
