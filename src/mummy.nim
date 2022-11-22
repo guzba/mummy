@@ -5,6 +5,12 @@ import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
 
 export Port, common
 
+when not defined(gcArc) and not defined(gcOrc):
+  {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
+
+when not compileOption("threads"):
+  {.error: "Using --threads:on is required by Mummy.".}
+
 const
   listenBacklogLen = 128
   maxEventsPerSelectLoop = 64
@@ -94,22 +100,22 @@ type
     buffer: string
     frameLen: int
 
-  EncodedResponse = ref object
-    clientSocket: SocketHandle
-    isWebSocketUpgrade, closeConnection: bool
-    buffer1, buffer2: string
-
-  EncodedFrame = ref object
-    clientSocket: SocketHandle
-    isCloseFrame: bool
-    buffer1, buffer2: string
-
   OutgoingBuffer = ref object
     closeConnection, isWebSocketUpgrade, isCloseFrame: bool
     buffer1, buffer2: string
     bytesSent: int
 
-  WebSocketEvent = ref object
+  EncodedResponse {.acyclic.} = ref object
+    clientSocket: SocketHandle
+    isWebSocketUpgrade, closeConnection: bool
+    buffer1, buffer2: string
+
+  EncodedFrame {.acyclic.} = ref object
+    clientSocket: SocketHandle
+    isCloseFrame: bool
+    buffer1, buffer2: string
+
+  WebSocketEvent {.acyclic.} = ref object
     event: WebSocketEventKind
     message: WebSocketMessage
 
