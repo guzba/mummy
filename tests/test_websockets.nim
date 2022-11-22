@@ -21,7 +21,15 @@ proc websocketHandler(
   of OpenEvent:
     websocket.send("Second")
   of MessageEvent:
-    doAssert message == "Third"
+    case messageKind:
+    of TextMessage:
+      doAssert message == "Third"
+    of BinaryMessage:
+      doAssert false
+    of mummy.Ping:
+      doAssert false
+    of mummy.Pong:
+      doAssert false
     websocket.send("Fourth", BinaryMessage)
   of ErrorEvent:
     echo "Error occurred"

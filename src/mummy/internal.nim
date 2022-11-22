@@ -52,6 +52,6 @@ proc encodeHeaders*(
   result.add statusLine
 
   for (k, v) in headers:
-    result.add k & ": " & v & "\r\n"
+    result.add k & ": " & v & "\r\n" # Optimizable
 
   result.add "\r\n"
