@@ -834,6 +834,7 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     server.sendQueued.close()
   except:
     discard # Ignore
+  deallocShared(server)
 
 proc loopForever(
   server: Server,
