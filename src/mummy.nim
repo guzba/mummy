@@ -111,7 +111,13 @@ type
     messageKind: MessageKind
 
 proc `$`*(request: Request): string =
-  "Request"
+  result = request.httpMethod & " " & request.uri & " "
+  case request.httpVersion:
+  of Http10:
+    result &= "HTTP/1.0"
+  else:
+    result &= "HTTP/1.0"
+  result &= " (" & $cast[uint](request) & ")"
 
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $hash(websocket)
