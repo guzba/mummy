@@ -48,7 +48,7 @@ type
     veryBad: bool
     socket: SocketHandle
     selector: Selector[HandleData]
-    responseQueued, sendQueued: SelectEvent
+    responseQueued, sendQueued, shutdown: SelectEvent
     clientSockets: HashSet[SocketHandle]
     workerQueue: Deque[WorkerTask]
     workerQueueLock: Lock
@@ -798,6 +798,37 @@ proc convertToOutgoingBuffer(encodedResponse: EncodedResponse): OutgoingBuffer =
   result.buffer1 = move encodedResponse.buffer1
   result.buffer2 = move encodedResponse.buffer2
 
+proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
+  if server.selector != nil:
+    try:
+      server.selector.close()
+    except:
+      discard # Ignore
+  server.selector = nil # Since this lives on a pointer
+  if server.socket.int != 0:
+    server.socket.close()
+  for clientSocket in server.clientSockets:
+    clientSocket.close()
+  acquire(server.workerQueueLock)
+  server.veryBad = true
+  release(server.workerQueueLock)
+  broadcast(server.workerQueueCond)
+  if joinThreads:
+    joinThreads(server.workerThreads)
+  deinitLock(server.workerQueueLock)
+  deinitCond(server.workerQueueCond)
+  deinitLock(server.responseQueueLock)
+  deinitLock(server.sendQueueLock)
+  deinitLock(server.websocketQueuesLock)
+  try:
+    server.responseQueued.close()
+  except:
+    discard # Ignore
+  try:
+    server.sendQueued.close()
+  except:
+    discard # Ignore
+
 proc loopForever(
   server: Server,
   port: Port
@@ -883,6 +914,9 @@ proc loopForever(
               clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
           else:
             discard # TODO: log?
+        elif eventHandleData.forEvent == server.shutdown:
+          server.destroy(true)
+          return
         else:
           assert false # Notice this when not a release build
       elif readyKey.fd == server.socket.int:
@@ -983,37 +1017,8 @@ proc loopForever(
           event = WebSocketEvent(event: CloseEvent)
         websocket.enqueueWebSocketEvent(event)
 
-proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
-  if server.selector != nil:
-    try:
-      server.selector.close()
-    except:
-      discard # Ignore
-  server.selector = nil # Since this lives on a pointer
-  if server.socket.int != 0:
-    server.socket.close()
-  for clientSocket in server.clientSockets:
-    clientSocket.close()
-
-  acquire(server.workerQueueLock)
-  server.veryBad = true
-  release(server.workerQueueLock)
-  broadcast(server.workerQueueCond)
-  if joinThreads:
-    joinThreads(server.workerThreads)
-  deinitLock(server.workerQueueLock)
-  deinitCond(server.workerQueueCond)
-  deinitLock(server.responseQueueLock)
-  deinitLock(server.sendQueueLock)
-  deinitLock(server.websocketQueuesLock)
-  try:
-    server.responseQueued.close()
-  except:
-    discard # Ignore
-  try:
-    server.sendQueued.close()
-  except:
-    discard # Ignore
+proc close*(server: Server) {.raises: [], gcsafe.} =
+  server.shutdown.trigger2()
 
 proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
   if server.socket.int != 0:
@@ -1054,6 +1059,10 @@ proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
     let sendQueuedData = HandleData()
     sendQueuedData.forEvent = server.sendQueued
     server.selector.registerEvent(server.sendQueued, sendQueuedData)
+
+    let shutdownData = HandleData()
+    shutdownData.forEvent = server.shutdown
+    server.selector.registerEvent(server.shutdown, shutdownData)
   except:
     server.destroy(true)
     raise currentExceptionAsMummyError()
@@ -1092,6 +1101,7 @@ proc newServer*(
   try:
     result.responseQueued = newSelectEvent()
     result.sendQueued = newSelectEvent()
+    result.shutdown = newSelectEvent()
 
     for workerThead in result.workerThreads.mitems:
       createThread(workerThead, workerProc, result)
