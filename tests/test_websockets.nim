@@ -41,6 +41,7 @@ proc requesterProc() =
   waitFor websocket.send("Third")
   doAssert (waitFor websocket.receiveBinaryPacket()) == cast[seq[byte]]("Fourth")
   websocket.close()
+  # websocket.hangUp()
   waitFor sleepAsync(100)
 
   echo "Done, shut down the server"

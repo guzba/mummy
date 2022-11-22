@@ -1012,10 +1012,12 @@ proc loopForever(
         clientSocket.close()
         server.clientSockets.excl(clientSocket)
       if handleData.upgradedToWebSocket:
-        let
-          websocket = WebSocket(server: server, clientSocket: clientSocket)
-          event = WebSocketEvent(event: CloseEvent)
-        websocket.enqueueWebSocketEvent(event)
+        let websocket = WebSocket(server: server, clientSocket: clientSocket)
+        if not handleData.closeFrameSent:
+          let error = WebSocketEvent(event: ErrorEvent)
+          websocket.enqueueWebSocketEvent(error)
+        let close = WebSocketEvent(event: CloseEvent)
+        websocket.enqueueWebSocketEvent(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
   server.shutdown.trigger2()
