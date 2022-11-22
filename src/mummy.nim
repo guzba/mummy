@@ -277,7 +277,8 @@ proc respond*(
   elif request.httpVersion == Http10 or "Connection" notin headers:
     headers["Connection"] = "keep-alive"
 
-  if body.len > 128: # If the body is big enough to justify compressing
+  # If the body is big enough to justify compressing and not already compressed
+  if body.len > 128 and "Content-Encoding" notin headers:
     if request.headers.headerContainsToken("Accept-Encoding", "gzip"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfGzip)
