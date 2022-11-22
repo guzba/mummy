@@ -1,6 +1,6 @@
-import std/cpuinfo, std/locks, std/deques, std/nativesockets,
-    std/selectors, std/os, std/hashes, std/sets, mummy/common, std/strutils,
-    mummy/internal, std/tables, std/times, std/sha1, std/parseutils, std/base64
+import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
+    std/hashes, std/locks, std/nativesockets, std/os, std/parseutils,
+    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times
 
 export Port, common
 
