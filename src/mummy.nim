@@ -1,36 +1,51 @@
-import std/base64, std/cpuinfo, std/deques, std/locks, std/nativesockets, std/os,
-    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/times,
-    std/hashes, std/tables
+import std/cpuinfo, std/locks, std/deques, std/nativesockets,
+    std/selectors, std/os, std/hashes, std/sets, mummy/common, std/strutils,
+    mummy/internal, std/tables, std/times, std/sha1, std/parseutils, std/base64
 
-export Port
+export Port, common
 
 const
   listenBacklogLen = 128
-  maxEventsPerSelectLoop = 32
+  maxEventsPerSelectLoop = 64
   initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 type
-  HttpServerError* = object of CatchableError
+  RequestObj = object
+    httpVersion*: HttpVersion
+    httpMethod*: string
+    uri*: string
+    headers*: HttpHeaders
+    body*: string
+    server: Server
+    clientSocket: SocketHandle
 
-  HttpVersion* = enum
-    Http10, Http11
+  Request* = ptr RequestObj
 
-  HttpHandler* = proc(request: HttpRequest, response: var HttpResponse) {.gcsafe.}
+  RequestHandler* = proc(request: Request) {.gcsafe.}
 
-  WebSocketOpenHandler* = proc(websocket: WebSocket) {.gcsafe.}
-  WebSocketMessageHandler = proc(websocket: WebSocket, kind: WsMsgKind, data: string) {.gcsafe.}
-  WebSocketCloseHandler* = proc(websocket: WebSocket) {.gcsafe.}
+  WebSocket* = object
+    server: Server
+    clientSocket: SocketHandle
 
-  HttpServer* = ref HttpServerObj
+  WebSocketEventKind* = enum
+    OpenEvent, MessageEvent, ErrorEvent, CloseEvent
 
-  HttpServerObj = object
-    handler: HttpHandler
-    openHandler: WebSocketOpenHandler
-    messageHandler: WebSocketMessageHandler
-    closeHandler: WebSocketCloseHandler
+  MessageKind* = enum
+    TextMessage, BinaryMessage, Ping, Pong
+
+  WebSocketHandler* = proc(
+    websocket: WebSocket,
+    event: WebSocketEventKind,
+    message: string,
+    messageKind: MessageKind
+  ) {.gcsafe.}
+
+  ServerObj = object
+    handler: RequestHandler
+    websocketHandler: WebSocketHandler
     maxHeadersLen, maxBodyLen: int
-    workerThreads: seq[Thread[ptr HttpServerObj]]
-    running: bool
+    workerThreads: seq[Thread[Server]]
+    veryBad: bool
     socket: SocketHandle
     selector: Selector[HandleData]
     responseQueued, sendQueued: SelectEvent
@@ -38,26 +53,25 @@ type
     workerQueue: Deque[WorkerTask]
     workerQueueLock: Lock
     workerQueueCond: Cond
-    responseQueue: Deque[EncodedHttpResponse]
+    responseQueue: Deque[EncodedResponse]
     responseQueueLock: Lock
     sendQueue: Deque[EncodedFrame]
     sendQueueLock: Lock
     websocketQueues: Table[WebSocket, Deque[WebSocketEvent]]
     websocketQueuesLock: Lock
 
+  Server* = ptr ServerObj
+
   WorkerTask = object
-    request: HttpRequest
+    request: Request
     websocket: WebSocket
 
-  HandleKind = enum
-    ServerSocket, ClientSocket, ResponseQueuedEvent, SendQueuedEvent
-
   HandleData = ref object
-    handleKind: HandleKind
+    forEvent: SelectEvent
     recvBuffer: string
     bytesReceived: int
     requestState: IncomingRequestState
-    msgState: IncomingWsMsgState
+    frameState: IncomingFrameState
     outgoingBuffers: Deque[OutgoingBuffer]
     closeFrameQueuedAt: float64
     upgradedToWebSocket, closeFrameSent: bool
@@ -71,34 +85,12 @@ type
     headers: HttpHeaders
     body: string
 
-  IncomingWsMsgState = object
+  IncomingFrameState = object
     opcode: uint8
     buffer: string
-    msgLen: int
+    frameLen: int
 
-  OutgoingBuffer = ref object
-    closeConnection, isWebSocketUpgrade, isCloseFrame: bool
-    buffer1, buffer2: string
-    bytesSent: int
-
-  HttpHeaders* = seq[(string, string)]
-
-  HttpRequest* = ref object
-    httpVersion*: HttpVersion
-    httpMethod*: string
-    uri*: string
-    headers*: HttpHeaders
-    body*: string
-    server: ptr HttpServerObj
-    clientSocket: SocketHandle
-
-  HttpResponse* = object
-    statusCode*: int
-    headers*: HttpHeaders
-    body*: string
-    isWebSocketUpgrade: bool
-
-  EncodedHttpResponse = ref object
+  EncodedResponse = ref object
     clientSocket: SocketHandle
     isWebSocketUpgrade, closeConnection: bool
     buffer1, buffer2: string
@@ -108,61 +100,27 @@ type
     isCloseFrame: bool
     buffer1, buffer2: string
 
-  WebSocket* = object
-    server: ptr HttpServerObj
-    clientSocket: SocketHandle
-
-  WsMsgKind* = enum
-    TextMsg, BinaryMsg
-
-  WebSocketEventKind = enum
-    OpenEvent, MessageEvent, CloseEvent
+  OutgoingBuffer = ref object
+    closeConnection, isWebSocketUpgrade, isCloseFrame: bool
+    buffer1, buffer2: string
+    bytesSent: int
 
   WebSocketEvent = ref object
-    kind: WebSocketEventKind
-    msgKind: WsMsgKind
-    msg: string
+    event: WebSocketEventKind
+    message: string
+    messageKind: MessageKind
 
-# proc `$`*(request: HttpRequest): string =
-#   discard
-
-# proc `$`*(response: var HttpResponse): string =
-#   discard
+proc `$`*(request: Request): string =
+  "Request"
 
 proc `$`*(websocket: WebSocket): string =
-  "WebSocket " & $websocket.clientSocket.int
+  "WebSocket " & $hash(websocket)
 
 proc hash*(websocket: WebSocket): Hash =
   var h: Hash
   h = h !& hash(websocket.server)
   h = h !& hash(websocket.clientSocket)
   return !$h
-
-template currentExceptionAsHttpServerError(): untyped =
-  let e = getCurrentException()
-  newException(HttpServerError, e.getStackTrace & e.msg, e)
-
-proc contains*(headers: var HttpHeaders, key: string): bool =
-  ## Checks if there is at least one header for the key. Not case sensitive.
-  for (k, v) in headers:
-    if cmpIgnoreCase(k, key) == 0:
-      return true
-
-proc `[]`*(headers: var HttpHeaders, key: string): string =
-  ## Returns the first header value the key. Not case sensitive.
-  for (k, v) in headers:
-    if cmpIgnoreCase(k, key) == 0:
-      return v
-
-proc `[]=`*(headers: var HttpHeaders, key, value: string) =
-  ## Adds a new header if the key is not already present. If the key is already
-  ## present this overrides the first header value for the key.
-  ## Not case sensitive.
-  for i, (k, v) in headers:
-    if cmpIgnoreCase(k, key) == 0:
-      headers[i][1] = value
-      return
-  headers.add((key, value))
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
@@ -192,53 +150,76 @@ proc trigger2(
   try:
     event.trigger()
   except:
-    # TODO: EAGAIN vs other
-    echo "Triggering event failed"
-
-proc encodeFrameHeader(
-  opcode: uint8,
-  payloadLen: int
-): string {.raises: [], gcsafe.} =
-  assert (opcode and 0b11110000) == 0
-
-  var frameHeaderLen = 2
-
-  if payloadLen <= 125:
+    # TODO: EAGAIN vs other, log
+    # Happens if SelectEvent has been closed
     discard
-  elif payloadLen <= uint16.high.int:
-    frameHeaderLen += 2
-  else:
-    frameHeaderLen += 8
 
-  result = newStringOfCap(frameHeaderLen)
-  result.add cast[char](0b10000000 or opcode)
+proc workerProc(server: Server) =
+  while true:
+    acquire(server.workerQueueLock)
 
-  if payloadLen <= 125:
-    result.add payloadLen.char
-  elif payloadLen <= uint16.high.int:
-    result.add 126.char
-    var l = cast[uint16](payloadLen).htons
-    result.setLen(result.len + 2)
-    copyMem(result[result.len - 2].addr, l.addr, 2)
-  else:
-    result.add 127.char
-    var l = cast[uint32](payloadLen).htonl
-    result.setLen(result.len + 8)
-    copyMem(result[result.len - 4].addr, l.addr, 4)
+    while server.workerQueue.len == 0 and not server.veryBad:
+      wait(server.workerQueueCond, server.workerQueueLock)
+
+    if server.veryBad:
+      release(server.workerQueueLock)
+      return
+
+    var task = server.workerQueue.popFirst()
+
+    release(server.workerQueueLock)
+
+    if task.request != nil:
+      try:
+        server.handler(task.request)
+      except:
+        # TODO: log?
+        echo getCurrentExceptionMsg()
+      deallocShared(task.request)
+    else: # WebSocket
+      while true: # Process the entire websocket queue
+        var event: WebSocketEvent
+        acquire(server.websocketQueuesLock)
+        if task.websocket in server.websocketQueues:
+          try:
+            if server.websocketQueues[task.websocket].len > 0:
+              event = server.websocketQueues[task.websocket].popFirst()
+            else:
+              server.websocketQueues.del(task.websocket)
+          except KeyError:
+            discard
+        release(server.websocketQueuesLock)
+        if event == nil:
+          break
+
+        try:
+          server.websocketHandler(
+            task.websocket,
+            event.event,
+            move event.message,
+            event.messageKind
+          )
+        except:
+          # TODO: log?
+          echo getCurrentExceptionMsg()
 
 proc send*(
   websocket: WebSocket,
   data: sink string,
-  kind = TextMsg,
+  kind = TextMessage,
 ) {.raises: [], gcsafe.} =
   let encodedFrame = EncodedFrame()
   encodedFrame.clientSocket = websocket.clientSocket
 
   case kind:
-  of TextMsg:
+  of TextMessage:
     encodedFrame.buffer1 = encodeFrameHeader(0x1, data.len)
-  of BinaryMsg:
+  of BinaryMessage:
     encodedFrame.buffer1 = encodeFrameHeader(0x2, data.len)
+  of Ping:
+    encodedFrame.buffer1 = encodeFrameHeader(0x9, data.len)
+  of Pong:
+    encodedFrame.buffer1 = encodeFrameHeader(0xA, data.len)
 
   encodedFrame.buffer2 = move data
 
@@ -260,33 +241,76 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
 
   websocket.server.sendQueued.trigger2()
 
-proc websocketUpgrade*(
-  request: HttpRequest,
-  response: var HttpResponse
-): WebSocket {.raises: [HttpServerError], gcsafe.} =
+proc respond*(
+  request: Request,
+  statusCode: int,
+  headers: sink HttpHeaders = newSeq[(string, string)](),
+  body: sink string = ""
+) {.raises: [], gcsafe.} =
+  var encodedResponse = EncodedResponse()
+  encodedResponse.clientSocket = request.clientSocket
+  encodedResponse.closeConnection =
+    request.httpVersion == Http10 # Default behavior
+
+  # Override default behavior based on request Connection header
+  if request.headers.headerContainsToken("Connection", "close"):
+    encodedResponse.closeConnection = true
+  elif request.headers.headerContainsToken("Connection", "keep-alive"):
+    encodedResponse.closeConnection = false
+
+  # If we are not already going to close the connection based on the request
+  # headers, check if we should based on the response headers
+  if not encodedResponse.closeConnection:
+    encodedResponse.closeConnection = headers.headerContainsToken(
+      "Connection", "close"
+    )
+
+  if encodedResponse.closeConnection:
+    headers["Connection"] = "close"
+  elif request.httpVersion == Http10 or "Connection" notin headers:
+    headers["Connection"] = "keep-alive"
+
+  headers["Content-Length"] = $body.len
+
+  encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
+  encodedResponse.buffer2 = move body
+  encodedResponse.isWebSocketUpgrade = headers.headerContainsToken(
+    "Upgrade",
+    "websocket"
+  )
+
+  acquire(request.server.responseQueueLock)
+  request.server.responseQueue.addLast(move encodedResponse)
+  release(request.server.responseQueueLock)
+
+  request.server.responseQueued.trigger2()
+
+proc upgradeToWebSocket*(
+  request: Request
+): WebSocket {.raises: [MummyError], gcsafe.} =
   if not request.headers.headerContainsToken("Connection", "upgrade"):
     raise newException(
-      HttpServerError,
+      MummyError,
       "Invalid request to upgade, missing 'Connection: upgrade' header"
     )
 
   if not request.headers.headerContainsToken("Upgrade", "websocket"):
     raise newException(
-      HttpServerError,
+      MummyError,
       "Invalid request to upgade, missing 'Upgrade: websocket' header"
     )
 
   let websocketKey = request.headers["Sec-WebSocket-Key"]
   if websocketKey == "":
     raise newException(
-      HttpServerError,
+      MummyError,
       "Invalid request to upgade, missing Sec-WebSocket-Key header"
     )
 
   let websocketVersion = request.headers["Sec-WebSocket-Version"]
   if websocketVersion != "13":
     raise newException(
-      HttpServerError,
+      MummyError,
       "Invalid request to upgade, missing Sec-WebSocket-Version header"
     )
 
@@ -298,16 +322,21 @@ proc websocketUpgrade*(
   let hash =
     secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
 
-  response.statusCode = 101
-  response.headers["Connection"] = "upgrade"
-  response.headers["Upgrade"] = "websocket"
-  response.headers["Sec-WebSocket-Accept"] = base64.encode(hash)
-  response.isWebSocketUpgrade = true
+  var headers: HttpHeaders
+  headers["Connection"] = "upgrade"
+  headers["Upgrade"] = "websocket"
+  headers["Sec-WebSocket-Accept"] = base64.encode(hash)
+
+  request.respond(101, headers, "")
 
 proc enqueueWebSocketEvent(
   websocket: WebSocket,
   event: WebSocketEvent
 ) {.raises: [].} =
+  if websocket.server.websocketHandler == nil:
+    # TODO: log?
+    return
+
   var needsWorkQueueEntry: bool
 
   acquire(websocket.server.websocketQueuesLock)
@@ -315,7 +344,7 @@ proc enqueueWebSocketEvent(
     try:
       websocket.server.websocketQueues[websocket].addLast(event)
     except KeyError:
-      discard
+      assert false # Notice this when not a release build
   else:
     var queue: Deque[WebSocketEvent]
     queue.addLast(event)
@@ -329,24 +358,8 @@ proc enqueueWebSocketEvent(
     release(websocket.server.workerQueueLock)
     signal(websocket.server.workerQueueCond)
 
-proc popWsMsg(handleData: HandleData): string {.raises: [].} =
-  ## Pops the completed WsMsg from the socket and resets the parse state.
-  result = move handleData.msgState.buffer
-  result.setLen(handleData.msgState.msgLen)
-  handleData.msgState = IncomingWsMsgState()
-
-proc sendPongMsg(
-  server: HttpServer,
-  clientSocket: SocketHandle,
-  handleData: HandleData
-) {.raises: [IOSelectorsException].} =
-  let outgoingBuffer = OutgoingBuffer()
-  outgoingBuffer.buffer1 = encodeFrameHeader(0xA, 0)
-  handleData.outgoingBuffers.addLast(outgoingBuffer)
-  server.selector.updateHandle2(clientSocket, {Read, Write})
-
-proc sendCloseMsg(
-  server: HttpServer,
+proc sendCloseFrame(
+  server: Server,
   clientSocket: SocketHandle,
   handleData: HandleData,
   closeConnection: bool
@@ -360,13 +373,14 @@ proc sendCloseMsg(
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc afterRecvWebSocket(
-  server: HttpServer,
+  server: Server,
   clientSocket: SocketHandle,
   handleData: HandleData
 ): bool {.raises: [IOSelectorsException].} =
   if handleData.closeFrameQueuedAt > 0 and
     epochTime() - handleData.closeFrameQueuedAt > 10:
     # The Close frame dance didn't work out, just close the connection
+    # TODO: log?
     return true
 
   # Try to parse entire frames out of the receive buffer
@@ -390,11 +404,11 @@ proc afterRecvWebSocket(
     if (b1 and 0b10000000) == 0:
       return true # Per spec, close the connection
 
-    if opcode == 0 and handleData.msgState.opcode == 0:
+    if opcode == 0 and handleData.frameState.opcode == 0:
       # Per spec, the first frame must have an opcode > 0
       return true # Close the connection
 
-    if handleData.msgState.opcode != 0 and opcode != 0:
+    if handleData.frameState.opcode != 0 and opcode != 0:
       # Per spec, if we have buffered fragments the opcode must be 0
       return true # Close the connection
 
@@ -418,7 +432,7 @@ proc afterRecvWebSocket(
       payloadLen = l.htonl.int
       pos += 8
 
-    if handleData.msgState.msgLen + payloadLen > server.maxBodyLen:
+    if handleData.frameState.frameLen + payloadLen > server.maxBodyLen:
       return true # Message is too large, close the connection
 
     if handleData.bytesReceived < pos + 4:
@@ -438,24 +452,24 @@ proc afterRecvWebSocket(
       handleData.recvBuffer[pos + i] =
         (handleData.recvBuffer[pos + i].uint8 xor mask[j]).char
 
-    if handleData.msgState.opcode == 0:
+    if handleData.frameState.opcode == 0:
       # This is the first fragment
-      handleData.msgState.opcode = opcode
+      handleData.frameState.opcode = opcode
 
     # Make room in the message buffer for this fragment
-    let newMsgLen = handleData.msgState.msgLen + payloadLen
-    if handleData.msgState.buffer.len < newMsgLen:
-      let newBufferLen = max(handleData.msgState.buffer.len * 2, newMsgLen)
-      handleData.msgState.buffer.setLen(newBufferLen)
+    let newFrameLen = handleData.frameState.frameLen + payloadLen
+    if handleData.frameState.buffer.len < newFrameLen:
+      let newBufferLen = max(handleData.frameState.buffer.len * 2, newFrameLen)
+      handleData.frameState.buffer.setLen(newBufferLen)
 
     if payloadLen > 0:
       # Copy the fragment into the message buffer
       copyMem(
-        handleData.msgState.buffer[handleData.msgState.msgLen].addr,
+        handleData.frameState.buffer[handleData.frameState.frameLen].addr,
         handleData.recvBuffer[pos].addr,
         payloadLen
       )
-      handleData.msgState.msgLen += payloadLen
+      handleData.frameState.frameLen += payloadLen
 
     # Remove this frame from the receive buffer
     let frameLen = pos + payloadLen
@@ -470,74 +484,55 @@ proc afterRecvWebSocket(
       handleData.bytesReceived -= frameLen
 
     if fin:
-      if handleData.msgState.opcode == 0:
+      if handleData.frameState.opcode == 0:
         return true # Invalid frame, close the connection
 
-      # We have a full message
-      var msg = handleData.popWsMsg()
+    #   # We have a full message
 
-      let websocket = WebSocket(
-        server: cast[ptr HttpServerObj](server),
-        clientSocket: clientSocket
-      )
+      let
+        websocket = WebSocket(
+          server: server,
+          clientSocket: clientSocket
+        )
+        event = WebSocketEvent(
+          event: MessageEvent,
+          message: move handleData.frameState.buffer
+        )
+
+      event.message.setLen(handleData.frameState.frameLen)
+      handleData.frameState = IncomingFrameState()
 
       case opcode:
       of 0x1: # Text
-        let event = WebSocketEvent(
-          kind: MessageEvent,
-          msgKind: TextMsg,
-          msg: move msg
-        )
-        websocket.enqueueWebSocketEvent(event)
+        event.messageKind = TextMessage
       of 0x2: # Binary
-        let event = WebSocketEvent(
-          kind: MessageEvent,
-          msgKind: BinaryMsg,
-          msg: move msg
-        )
-        websocket.enqueueWebSocketEvent(event)
+        event.messageKind = BinaryMessage
       of 0x8: # Close
         # If we already queued a close, just close the connection
         # This is not quite perfect
         if handleData.closeFrameQueuedAt > 0:
           return true # Close the connection
         # Otherwise send a Close in response then close the connection
-        server.sendCloseMsg(clientSocket, handleData, true)
+        server.sendCloseFrame(clientSocket, handleData, true)
         continue
       of 0x9: # Ping
-        server.sendPongMsg(clientSocket, handleData)
-        continue
+        event.messageKind = Ping
       of 0xA: # Pong
-        continue
+        event.messageKind = Pong
       else:
+        # TODO: log?
         return true # Invalid opcode, close the connection
 
-proc encodeHeaders(response: var HttpResponse): string {.raises: [], gcsafe.} =
-  let statusLine = "HTTP/1.1 " & $response.statusCode & "\r\n"
-
-  var headersLen = statusLine.len
-  for (k, v) in response.headers:
-    # k + ": " + v + "\r\n"
-    headersLen += k.len + 2 + v.len + 2
-  # "\r\n"
-  headersLen += 2
-
-  result = newStringOfCap(headersLen)
-  result.add statusLine
-
-  for (k, v) in response.headers:
-    result.add k & ": " & v & "\r\n"
-
-  result.add "\r\n"
+      websocket.enqueueWebSocketEvent(event)
 
 proc popRequest(
-  server: HttpServer,
+  server: Server,
   clientSocket: SocketHandle,
   handleData: HandleData
-): HttpRequest {.raises: [].} =
+): Request {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
-  result = HttpRequest()
-  result.server = cast[ptr HttpServerObj](server)
+  result = cast[Request](allocShared0(sizeof(RequestObj)))
+  result.server = server
   result.clientSocket = clientSocket
   result.httpVersion = handleData.requestState.httpVersion
   result.httpMethod = move handleData.requestState.httpMethod
@@ -548,7 +543,7 @@ proc popRequest(
   handleData.requestState = IncomingRequestState()
 
 proc afterRecvHttp(
-  server: HttpServer,
+  server: Server,
   clientSocket: SocketHandle,
   handleData: HandleData
 ): bool {.raises: [].} =
@@ -711,9 +706,9 @@ proc afterRecvHttp(
       handleData.bytesReceived = bytesRemaining
 
       if chunkLen == 0:
-        var request = server.popRequest(clientSocket, handleData)
+        let request = server.popRequest(clientSocket, handleData)
         acquire(server.workerQueueLock)
-        server.workerQueue.addLast(WorkerTask(request: move request))
+        server.workerQueue.addLast(WorkerTask(request: request))
         release(server.workerQueueLock)
         signal(server.workerQueueCond)
         return false
@@ -745,14 +740,14 @@ proc afterRecvHttp(
     )
     handleData.bytesReceived = bytesRemaining
 
-    var request = server.popRequest(clientSocket, handleData)
+    let request = server.popRequest(clientSocket, handleData)
     acquire(server.workerQueueLock)
-    server.workerQueue.addLast(WorkerTask(request: move request))
+    server.workerQueue.addLast(WorkerTask(request: request))
     release(server.workerQueueLock)
     signal(server.workerQueueCond)
 
 proc afterRecv(
-  server: HttpServer,
+  server: Server,
   clientSocket: SocketHandle,
   handleData: HandleData
 ): bool {.raises: [IOSelectorsException].} =
@@ -764,7 +759,7 @@ proc afterRecv(
     server.afterRecvHttp(clientSocket, handleData)
 
 proc afterSend(
-  server: HttpServer,
+  server: Server,
   clientSocket: SocketHandle,
   handleData: HandleData
 ): bool {.raises: [IOSelectorsException].} =
@@ -776,10 +771,10 @@ proc afterSend(
     if outgoingBuffer.isWebSocketUpgrade:
       let
         websocket = WebSocket(
-          server: cast[ptr HttpServerObj](server),
+          server: server,
           clientSocket: clientSocket
         )
-        event = WebSocketEvent(kind: OpenEvent)
+        event = WebSocketEvent(event: OpenEvent)
       websocket.enqueueWebSocketEvent(event)
 
     if outgoingBuffer.isCloseFrame:
@@ -789,8 +784,22 @@ proc afterSend(
   if handleData.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
+proc convertToOutgoingBuffer(encodedFrame: EncodedFrame): OutgoingBuffer =
+  result = OutgoingBuffer()
+  result.buffer1 = move encodedFrame.buffer1
+  result.buffer2 = move encodedFrame.buffer2
+  result.isCloseFrame = encodedFrame.isCloseFrame
+
+proc convertToOutgoingBuffer(encodedResponse: EncodedResponse): OutgoingBuffer =
+  result = OutgoingBuffer()
+  result.closeConnection = encodedResponse.closeConnection
+  result.isWebSocketUpgrade =
+    encodedResponse.isWebSocketUpgrade
+  result.buffer1 = move encodedResponse.buffer1
+  result.buffer2 = move encodedResponse.buffer2
+
 proc loopForever(
-  server: HttpServer,
+  server: Server,
   port: Port
 ) {.raises: [OSError, IOSelectorsException].} =
   var
@@ -808,7 +817,7 @@ proc loopForever(
 
       if User in readyKey.events:
         let eventHandleData = server.selector.getData(readyKey.fd)
-        if eventHandleData.handleKind == ResponseQueuedEvent:
+        if eventHandleData.forEvent == server.responseQueued:
           acquire(server.responseQueueLock)
           let encodedResponse = server.responseQueue.popFirst()
           release(server.responseQueueLock)
@@ -817,12 +826,7 @@ proc loopForever(
             let clientHandleData =
               server.selector.getData(encodedResponse.clientSocket)
 
-            let outgoingBuffer = OutgoingBuffer()
-            outgoingBuffer.closeConnection = encodedResponse.closeConnection
-            outgoingBuffer.isWebSocketUpgrade =
-              encodedResponse.isWebSocketUpgrade
-            outgoingBuffer.buffer1 = move encodedResponse.buffer1
-            outgoingBuffer.buffer2 = move encodedResponse.buffer2
+            let outgoingBuffer = encodedResponse.convertToOutgoingBuffer()
             clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
             server.selector.updateHandle2(
               encodedResponse.clientSocket,
@@ -835,6 +839,7 @@ proc loopForever(
                 # Why have we received bytes when we are upgrading the connection?
                 needClosing.add(readyKey.fd.SocketHandle)
                 clientHandleData.sendsWaitingForUpgrade.setLen(0)
+                # TODO: log?
                 continue
               # Are there any sends that were waiting for this response?
               if clientHandleData.sendsWaitingForUpgrade.len > 0:
@@ -843,16 +848,14 @@ proc loopForever(
                     discard # Drop this message
                     # TODO: log?
                   else:
-                    let outgoingBuffer = OutgoingBuffer()
-                    outgoingBuffer.buffer1 = move encodedFrame.buffer1
-                    outgoingBuffer.buffer2 = move encodedFrame.buffer2
-                    outgoingBuffer.isCloseFrame = encodedFrame.isCloseFrame
+                    let outgoingBuffer = encodedFrame.convertToOutgoingBuffer()
                     clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
                     if encodedFrame.isCloseFrame:
                       clientHandleData.closeFrameQueuedAt = epochTime()
                 clientHandleData.sendsWaitingForUpgrade.setLen(0)
-
-        elif eventHandleData.handleKind == SendQueuedEvent:
+          else:
+            discard # TODO: log?
+        elif eventHandleData.forEvent == server.sendQueued:
           acquire(server.responseQueueLock)
           let encodedFrame = server.sendQueue.popFirst()
           release(server.responseQueueLock)
@@ -867,10 +870,7 @@ proc loopForever(
                 discard # Drop this message
                 # TODO: log?
               else:
-                let outgoingBuffer = OutgoingBuffer()
-                outgoingBuffer.buffer1 = move encodedFrame.buffer1
-                outgoingBuffer.buffer2 = move encodedFrame.buffer2
-                outgoingBuffer.isCloseFrame = encodedFrame.isCloseFrame
+                let outgoingBuffer = encodedFrame.convertToOutgoingBuffer()
                 clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
                 if encodedFrame.isCloseFrame:
                   clientHandleData.closeFrameQueuedAt = epochTime()
@@ -881,10 +881,11 @@ proc loopForever(
             else:
               # If we haven't, queue this to wait for the upgrade response
               clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
-
-        continue
-
-      if readyKey.fd == server.socket.int:
+          else:
+            discard # TODO: log?
+        else:
+          assert false # Notice this when not a release build
+      elif readyKey.fd == server.socket.int:
         if Read in readyKey.events:
           let (clientSocket, _) = server.socket.accept()
           if clientSocket == osInvalidSocket:
@@ -894,10 +895,11 @@ proc loopForever(
           server.clientSockets.incl(clientSocket)
 
           let handleData = HandleData()
-          handleData.handleKind = ClientSocket
           handleData.recvBuffer.setLen(initialRecvBufferLen)
           server.selector.registerHandle(clientSocket, {Read}, handleData)
-      else:
+        else:
+          assert false # Notice this when not a release build
+      else: # Client socket
         if Error in readyKey.events:
           needClosing.add(readyKey.fd.SocketHandle)
           continue
@@ -970,25 +972,52 @@ proc loopForever(
         server.selector.unregister(clientSocket)
       except:
         # Leaks HandleData for this socket
-        # Raise as a serve() exception
+        # Raise as a serve() exception?
         raise cast[ref IOSelectorsException](getCurrentException())
-      clientSocket.close()
-      server.clientSockets.excl(clientSocket)
+      finally:
+        clientSocket.close()
+        server.clientSockets.excl(clientSocket)
       if handleData.upgradedToWebSocket:
         let
-          websocket = WebSocket(
-            server: cast[ptr HttpServerObj](server),
-            clientSocket: clientSocket
-          )
-          event = WebSocketEvent(kind: CloseEvent)
+          websocket = WebSocket(server: server, clientSocket: clientSocket)
+          event = WebSocketEvent(event: CloseEvent)
         websocket.enqueueWebSocketEvent(event)
 
-proc serve*(
-  server: HttpServer,
-  port: Port
-) {.raises: [HttpServerError].} =
+proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
+  if server.selector != nil:
+    try:
+      server.selector.close()
+    except:
+      discard # Ignore
+  server.selector = nil # Since this lives on a pointer
   if server.socket.int != 0:
-    raise newException(HttpServerError, "Server already has a socket")
+    server.socket.close()
+  for clientSocket in server.clientSockets:
+    clientSocket.close()
+
+  acquire(server.workerQueueLock)
+  server.veryBad = true
+  release(server.workerQueueLock)
+  broadcast(server.workerQueueCond)
+  if joinThreads:
+    joinThreads(server.workerThreads)
+  deinitLock(server.workerQueueLock)
+  deinitCond(server.workerQueueCond)
+  deinitLock(server.responseQueueLock)
+  deinitLock(server.sendQueueLock)
+  deinitLock(server.websocketQueuesLock)
+  try:
+    server.responseQueued.close()
+  except:
+    discard # Ignore
+  try:
+    server.sendQueued.close()
+  except:
+    discard # Ignore
+
+proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
+  if server.socket.int != 0:
+    raise newException(MummyError, "Server already has a socket")
 
   try:
     server.socket = createNativeSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, false)
@@ -1016,146 +1045,38 @@ proc serve*(
 
     server.selector = newSelector[HandleData]()
 
-    let serverData = HandleData()
-    serverData.handleKind = ServerSocket
-    server.selector.registerHandle(server.socket, {Read}, serverData)
+    server.selector.registerHandle(server.socket, {Read}, nil)
 
     let responseQueuedData = HandleData()
-    responseQueuedData.handleKind = ResponseQueuedEvent
+    responseQueuedData.forEvent = server.responseQueued
     server.selector.registerEvent(server.responseQueued, responseQueuedData)
 
     let sendQueuedData = HandleData()
-    sendQueuedData.handleKind = SendQueuedEvent
+    sendQueuedData.forEvent = server.sendQueued
     server.selector.registerEvent(server.sendQueued, sendQueuedData)
   except:
-    if server.selector != nil:
-      try:
-        server.selector.close()
-      except:
-        discard # Ignore
-    if server.socket.int != 0:
-      server.socket.close()
-    raise currentExceptionAsHttpServerError()
+    server.destroy(true)
+    raise currentExceptionAsMummyError()
 
   try:
     server.loopForever(port)
   except:
-    try:
-      server.selector.close()
-    except:
-      discard # Ignore
-    for clientSocket in server.clientSockets:
-      clientSocket.close()
-    server.socket.close()
-    raise currentExceptionAsHttpServerError()
+    server.destroy(false)
+    raise currentExceptionAsMummyError()
 
-proc workerProc(server: ptr HttpServerObj) {.raises: [], gcsafe.} =
-  while true:
-    acquire(server.workerQueueLock)
-
-    while server.workerQueue.len == 0 and server.running:
-      wait(server.workerQueueCond, server.workerQueueLock)
-
-    if not server.running:
-      release(server.workerQueueLock)
-      return
-
-    var task = server.workerQueue.popFirst()
-
-    release(server.workerQueueLock)
-
-    if task.request != nil:
-      let httpVersion = task.request.httpVersion
-
-      var encodedResponse = EncodedHttpResponse()
-      encodedResponse.clientSocket = task.request.clientSocket
-      encodedResponse.closeConnection = httpVersion == Http10 # Default behavior
-
-      # Override default behavior based on Connection header
-      if task.request.headers.headerContainsToken("Connection", "close"):
-        encodedResponse.closeConnection = true
-      elif task.request.headers.headerContainsToken("Connection", "keep-alive"):
-        encodedResponse.closeConnection = false
-
-      var response: HttpResponse
-      try:
-        # Move task.request to prevent looking at it later
-        server.handler(move task.request, response)
-      except:
-        # TODO: log?
-        response = HttpResponse()
-        response.statusCode = 500
-
-      # If we are not already going to close the connection, check if we should
-      if not encodedResponse.closeConnection:
-        encodedResponse.closeConnection = response.headers.headerContainsToken(
-          "Connection", "close"
-        )
-
-      if encodedResponse.closeConnection:
-        response.headers["Connection"] = "close"
-      elif httpVersion == Http10 or "Connection" notin response.headers:
-        response.headers["Connection"] = "keep-alive"
-
-      response.headers["Content-Length"] = $response.body.len
-
-      encodedResponse.buffer1 = response.encodeHeaders()
-      encodedResponse.buffer2 = move response.body
-      encodedResponse.isWebSocketUpgrade = response.isWebSocketUpgrade
-
-      acquire(server.responseQueueLock)
-      server.responseQueue.addLast(move encodedResponse)
-      release(server.responseQueueLock)
-
-      server.responseQueued.trigger2()
-    else: # WebSocket
-      while true: # Process the entire websocket queue
-        var event: WebSocketEvent
-        acquire(server.websocketQueuesLock)
-        if task.websocket in server.websocketQueues:
-          try:
-            if server.websocketQueues[task.websocket].len > 0:
-              event = server.websocketQueues[task.websocket].popFirst()
-            else:
-              server.websocketQueues.del(task.websocket)
-          except KeyError:
-            discard
-        release(server.websocketQueuesLock)
-        if event == nil:
-          break
-
-        try:
-          case event.kind:
-          of OpenEvent:
-            if server.openHandler != nil:
-              server.openHandler(task.websocket)
-          of MessageEvent:
-            if server.messageHandler != nil:
-              server.messageHandler(task.websocket, event.msgKind, move event.msg)
-          of CloseEvent:
-            if server.closeHandler != nil:
-              server.closeHandler(task.websocket)
-        except:
-          # TODO: log?
-          echo getCurrentExceptionMsg()
-
-proc newHttpServer*(
-  handler: HttpHandler,
-  openHandler: WebSocketOpenHandler = nil,
-  messageHandler: WebSocketMessageHandler = nil,
-  closeHandler: WebSocketCloseHandler = nil,
+proc newServer*(
+  handler: RequestHandler,
+  websocketHandler: WebSocketHandler = nil,
   workerThreads = max(countProcessors() - 1, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
-): HttpServer {.raises: [HttpServerError].} =
+): Server {.raises: [MummyError].} =
   if handler == nil:
-    raise newException(HttpServerError, "The request handler must not be nil")
+    raise newException(MummyError, "The request handler must not be nil")
 
-  result = HttpServer()
+  result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
-  result.openHandler = openHandler
-  result.messageHandler = messageHandler
-  result.closeHandler = closeHandler
+  result.websocketHandler = websocketHandler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
 
@@ -1165,33 +1086,15 @@ proc newHttpServer*(
   initLock(result.sendQueueLock)
   initLock(result.websocketQueuesLock)
 
-  result.running = true
   result.workerThreads.setLen(workerThreads)
 
+  # Stuff that can fail
   try:
     result.responseQueued = newSelectEvent()
     result.sendQueued = newSelectEvent()
 
-    # Start the worker threads
     for workerThead in result.workerThreads.mitems:
-      createThread(workerThead, workerProc, cast[ptr HttpServerObj](result))
+      createThread(workerThead, workerProc, result)
   except:
-    acquire(result.workerQueueLock)
-    result.running = false
-    release(result.workerQueueLock)
-    broadcast(result.workerQueueCond)
-    joinThreads(result.workerThreads)
-    deinitLock(result.workerQueueLock)
-    deinitCond(result.workerQueueCond)
-    deinitLock(result.responseQueueLock)
-    deinitLock(result.sendQueueLock)
-    deinitLock(result.websocketQueuesLock)
-    try:
-      result.responseQueued.close()
-    except:
-      discard # Ignore
-    try:
-      result.sendQueued.close()
-    except:
-      discard # Ignore
-    raise currentExceptionAsHttpServerError()
+    result.destroy(true)
+    raise currentExceptionAsMummyError()

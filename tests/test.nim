@@ -1,24 +1,9 @@
-import httpserver, std/os, puppy
+import mummy
 
-const responseBody = "Hello, World!"
+proc handler(request: Request) =
+  var headers: HttpHeaders
+  headers["Content-Type"] = "text/plain"
+  request.respond(200, headers, "Hello, World!")
 
-var serverThread: Thread[void]
-
-proc serverProc() =
-  proc handler(request: HttpRequest, response: var HttpResponse) =
-    response.statusCode = 200
-    response.body = responseBody
-
-  let server = newHttpServer(handler)
-  server.serve(Port(8080))
-
-createThread(serverThread, serverProc)
-
-sleep(1000)
-
-let
-  request = newRequest("http://localhost:8080")
-  response = fetch(request)
-
-doAssert response.code == 200
-doAssert response.body == responseBody
+let server = newServer(handler)
+server.serve(Port(8080))
