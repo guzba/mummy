@@ -149,6 +149,17 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
         if cmpIgnoreCase(v, token) == 0:
           return true
 
+proc registerHandle2(
+  selector: Selector[HandleData],
+  socket: SocketHandle,
+  events: set[Event],
+  data: HandleData
+) {.raises: [IOSelectorsException].} =
+  try:
+    selector.registerHandle(socket, events, data)
+  except ValueError: # Why ValueError?
+    raise newException(IOSelectorsException, getCurrentExceptionMsg())
+
 proc updateHandle2(
   selector: Selector[HandleData],
   socket: SocketHandle,
@@ -967,7 +978,7 @@ proc loopForever(
 
           let handleData = HandleData()
           handleData.recvBuffer.setLen(initialRecvBufferLen)
-          server.selector.registerHandle(clientSocket, {Read}, handleData)
+          server.selector.registerHandle2(clientSocket, {Read}, handleData)
         else:
           assert false # Notice this when not a release build
       else: # Client socket
@@ -1089,7 +1100,7 @@ proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
 
     server.selector = newSelector[HandleData]()
 
-    server.selector.registerHandle(server.socket, {Read}, nil)
+    server.selector.registerHandle2(server.socket, {Read}, nil)
 
     let responseQueuedData = HandleData()
     responseQueuedData.forEvent = server.responseQueued
