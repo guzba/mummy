@@ -1,9 +1,16 @@
 import mummy, httpclient, std/os
 
 proc handler(request: Request) =
-  var headers: mummy.HttpHeaders
-  headers["Content-Type"] = "text/plain"
-  request.respond(200, headers, "Hello, World!")
+  case request.uri:
+  of "/":
+    if request.httpMethod == "GET":
+      var headers: mummy.HttpHeaders
+      headers["Content-Type"] = "text/plain"
+      request.respond(200, headers, "Hello, World!")
+    else:
+      request.respond(405)
+  else:
+    request.respond(404)
 
 let server = newServer(handler)
 
@@ -15,7 +22,13 @@ proc requesterProc() =
   block:
     let client = newHttpClient()
     doAssert client.getContent("http://localhost:8081/") == "Hello, World!"
-    server.close()
+
+  block:
+    let client = newHttpClient()
+    doAssert client.post("http://localhost:8081/", "").status == "405"
+
+  echo "Done, shut down the server"
+  server.close()
 
 createThread(requesterThread, requesterProc)
 
