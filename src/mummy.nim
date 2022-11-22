@@ -1110,7 +1110,3 @@ proc newServer*(
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
-
-
-
-# ERROR EVENT
