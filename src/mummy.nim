@@ -28,6 +28,10 @@ type
     server: Server
     clientSocket: SocketHandle
 
+  WebSocketMessage* = object
+    kind*: MessageKind
+    data*: string
+
   WebSocketEventKind* = enum
     OpenEvent, MessageEvent, ErrorEvent, CloseEvent
 
@@ -37,8 +41,7 @@ type
   WebSocketHandler* = proc(
     websocket: WebSocket,
     event: WebSocketEventKind,
-    message: string,
-    messageKind: MessageKind
+    message: WebSocketMessage
   ) {.gcsafe.}
 
   ServerObj = object
@@ -108,8 +111,7 @@ type
 
   WebSocketEvent = ref object
     event: WebSocketEventKind
-    message: string
-    messageKind: MessageKind
+    message: WebSocketMessage
 
 proc `$`*(request: Request): string =
   result = request.httpMethod & " " & request.uri & " "
@@ -203,8 +205,7 @@ proc workerProc(server: Server) =
           server.websocketHandler(
             task.websocket,
             event.event,
-            move event.message,
-            event.messageKind
+            move event.message
           )
         except:
           # TODO: log?
@@ -516,26 +517,19 @@ proc afterRecvWebSocket(
       if handleData.frameState.opcode == 0:
         return true # Invalid frame, close the connection
 
-    #   # We have a full message
+      # We have a full message
 
-      let
-        websocket = WebSocket(
-          server: server,
-          clientSocket: clientSocket
-        )
-        event = WebSocketEvent(
-          event: MessageEvent,
-          message: move handleData.frameState.buffer
-        )
+      var message: WebSocketMessage
+      message.data = move handleData.frameState.buffer
+      message.data.setLen(handleData.frameState.frameLen)
 
-      event.message.setLen(handleData.frameState.frameLen)
       handleData.frameState = IncomingFrameState()
 
       case opcode:
       of 0x1: # Text
-        event.messageKind = TextMessage
+        message.kind = TextMessage
       of 0x2: # Binary
-        event.messageKind = BinaryMessage
+        message.kind = BinaryMessage
       of 0x8: # Close
         # If we already queued a close, just close the connection
         # This is not quite perfect
@@ -545,12 +539,22 @@ proc afterRecvWebSocket(
         server.sendCloseFrame(clientSocket, handleData, true)
         continue
       of 0x9: # Ping
-        event.messageKind = Ping
+        message.kind = Ping
       of 0xA: # Pong
-        event.messageKind = Pong
+        message.kind = Pong
       else:
         # TODO: log?
         return true # Invalid opcode, close the connection
+
+      let
+        websocket = WebSocket(
+          server: server,
+          clientSocket: clientSocket
+        )
+        event = WebSocketEvent(
+          event: MessageEvent,
+          message: move message
+        )
 
       websocket.enqueueWebSocketEvent(event)
 

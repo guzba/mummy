@@ -14,16 +14,15 @@ proc handler(request: Request) =
 proc websocketHandler(
   websocket: mummy.WebSocket,
   event: WebSocketEventKind,
-  message: string,
-  messageKind: MessageKind
+  message: WebSocketMessage
 ) =
   case event:
   of OpenEvent:
     websocket.send("Second")
   of MessageEvent:
-    case messageKind:
+    case message.kind:
     of TextMessage:
-      doAssert message == "Third"
+      doAssert message.data == "Third"
     of BinaryMessage:
       doAssert false
     of mummy.Ping:
@@ -32,7 +31,7 @@ proc websocketHandler(
       doAssert false
     websocket.send("Fourth", BinaryMessage)
   of ErrorEvent:
-    echo "Error occurred"
+    discard
   of CloseEvent:
     echo "Closed websocket connection"
 
@@ -49,7 +48,7 @@ proc requesterProc() =
   waitFor websocket.send("Third")
   doAssert (waitFor websocket.receiveBinaryPacket()) == cast[seq[byte]]("Fourth")
   websocket.close()
-  # websocket.hangUp()
+  websocket.hangUp()
   waitFor sleepAsync(100)
 
   echo "Done, shut down the server"
