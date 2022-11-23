@@ -24,7 +24,7 @@ This model has many great benefits and is ready to take advantage of continued s
 
 ## Why use Mummy instead of async?
 
-* No more needing to use `{.async.}`, `Future[]`, `await`, etc and deal with [functions having colors](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/).
+* No more needing to use `{.async.}`, `Future[]`, `await` etc and deal with [functions having colors](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/).
 
 * Maintain the same excellent throughput of multiplexed nonblocking socket IO.
 
@@ -44,7 +44,7 @@ This model has many great benefits and is ready to take advantage of continued s
 
 ## What is Mummy not great for?
 
-Everything comes with trade-offs. Mummy is focused on being an exceptional API server. Think REST, JSON RPC, WebSockets, HTML from templates etc.
+Everything comes with trade-offs. Mummy is focused on being an exceptional API server. Think REST, JSON, RPC, WebSockets, HTML from templates etc.
 
 The property these share in common is they are all relatively memory-light. Most things are, which is great, but if you're specifically going to be serving a lot of very large files or expect large file uploads, Mummy is probably not the best choice.
 
