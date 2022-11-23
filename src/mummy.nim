@@ -758,7 +758,7 @@ proc afterRecvHttp(
       )
       handleData.bytesReceived = bytesRemaining
 
-      if chunkLen == 0:
+      if chunkLen == 0: # A chunk of len 0 marks the end of the request body
         let request = server.popRequest(clientSocket, handleData)
         server.dispatchTask(WorkerTask(request: request))
         return false
