@@ -127,7 +127,7 @@ With that in mind, I suggest three priorities:
 
 3) Prioritize what will enable you to write and maintain performant and reliable handlers.
 
-For Mummy, I believe it clears all three priorities:
+I believe Mummy clears all three priorities:
 
 1) Mummy prioritizes efficiency in receiving and dispatching incoming requests and sending outgoing responses. This means things like avoiding unnecessary memory copying, ensuring the CPU spends all of its time in your handlers.
 
