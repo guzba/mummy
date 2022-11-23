@@ -8,9 +8,9 @@
 
 Mummy is a multi-threaded HTTP and WebSocket server written entirely in Nim.
 
-Mummy has been written specifically to maximize the performance of your server hardware while also not compromising on programmer happiness.
+Mummy has been written specifically to maximize the performance of your server hardware without compromising on programmer happiness.
 
-* Supports HTTP keep-alive and gzip'ed response compression automatically.
+* Supports HTTP keep-alive and gzip response compression automatically.
 * Built-in first-class WebSocket support.
 * Multiplexed socket IO without the `{.async.}` price.
 
@@ -18,7 +18,7 @@ Mummy has been written specifically to maximize the performance of your server h
 
 Mummy operates with this basic model: handle all socket IO multiplexed on one thread and dispatch incoming requests and WebSocket events to a pool of worker threads.
 
-This model has many great benefits and is ready to benefit from continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
+This model has many great benefits and is ready to take advantage of continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
 
 ## Why use Mummy?
 
