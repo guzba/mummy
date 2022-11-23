@@ -50,7 +50,7 @@ Unfortunately, most HTTP servers pretend WebSockets don't exist.
 
 This means developers need to "hack" support in through additional dependencies, hijacking connections etc and it all rarely adds up into something really great.
 
-I see no reason why Websockets should not work exceptionally well right out of the box, saving developers a lot of uncertainty and time researching which of the N ways to wedge WebSocket support in to an HTTP server is "best".
+I see no reason why Websockets should not work exceptionally well right out of the box, saving developers a lot of uncertainty and time researching which of the possible ways to wedge WebSocket support in to an HTTP server is "best".
 
 ## What is Mummy not great for?
 
