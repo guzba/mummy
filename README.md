@@ -98,13 +98,13 @@ proc websocketHandler(
   message: Message
 ) =
   case event:
+  of OpenEvent:
+    discard
   of MessageEvent:
-    case message.kind:
-    of TextMessage:
-      echo message.data
-    else:
-      discard
-  else:
+    echo message.kind, ": ", message.data
+  of ErrorEvent:
+    discard
+  of CloseEvent:
     discard
 
 let server = newServer(handler, websocketHandler)
