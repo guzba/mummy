@@ -24,9 +24,9 @@ This model has many great benefits and is ready to take advantage of continued s
 
 When compared to async in Nim, Mummy means:
 
-* Maintain the same excellent throughput of multiplexed nonblocking socket IO.
-
 * Never needing to use `{.async.}`, `await` and deal with [functions having colors](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/) ever again.
+
+* Maintain the same excellent throughput of multiplexed nonblocking socket IO.
 
 * No concern that one blocking or expensive call will stall your entire server.
 
