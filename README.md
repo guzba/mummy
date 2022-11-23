@@ -14,11 +14,11 @@ Mummy is written specifically to maximize the performance of your server hardwar
 * Built-in first-class WebSocket support.
 * Multiplexed socket IO without the `{.async.}` price.
 
-## Why is Mummy different?
+## How is Mummy different?
 
 Mummy operates with this basic model: handle all socket IO multiplexed on one thread and dispatch incoming requests and WebSocket events to a pool of worker threads.
 
-This model has many great benefits.
+This model has many great benefits and is ready to benefit from continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
 
 ## Why use Mummy?
 
@@ -31,6 +31,8 @@ When compared to async in Nim, Mummy means:
 * No concern that one blocking or expensive call will stall your entire server.
 
 * Simpler to write request handlers. Blocking the thread is totally fine! Need to make a Postgres query? No problem, just wait for the results.
+
+* Takes advantage of multiple cores.
 
 When compared to traditional multi-threaded servers like Apache, Mummy:
 
