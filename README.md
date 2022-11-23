@@ -8,9 +8,15 @@
 
 Mummy is a multi-threaded HTTP and WebSocket server written entirely in Nim.
 
+Mummy is written specifically to maximize the performance of your server hardware while also not compromising on programmer happiness.
+
+* Supports HTTP keep-alive and gzip'ed response compression automatically.
+* Built-in first-class WebSocket support.
+* Multiplexed socket IO without the `{.async.}` price.
+
 ## Why is Mummy different?
 
-Mummy operates with this basic model: handle all socket IO multiplexed on one thread and dispatch incoming requests and WebSocket messages to a pool of worker threads.
+Mummy operates with this basic model: handle all socket IO multiplexed on one thread and dispatch incoming requests and WebSocket events to a pool of worker threads.
 
 This model has many great benefits.
 
@@ -31,6 +37,14 @@ When compared to traditional multi-threaded servers like Apache, Mummy:
 * Keeps your server's threads away from the socket. This has many benefits, one of which is preventing a malicious actor from easily blocking all of your server's threads with a low and slow attack.
 
 * Maintains the same simple to write request handlers.
+
+## What is Mummy not great for?
+
+Everything comes with trade-offs. Mummy is focused on being an exceptional API server. Think REST, JSON RPC, WebSockets, HTML from templates etc.
+
+The property these share in common is they are all relatively memory-light. Most things are, which is great, but if you're specifically going to be serving a lot of very large files or expect large file uploads, Mummy is probably not the best choice.
+
+Why is Mummy not great for large files? This is because Mummy dispatches fully received in-memory requests to worker threads and sends in-memory responses. This is great for everything except very large files.
 
 ## Example HTTP server
 
