@@ -42,6 +42,16 @@ This model has many great benefits and is ready to take advantage of continued s
 
 * Takes advantage of multiple cores and the amazing work of the Nim team on ARC / ORC and Nim 2.0.
 
+## Why prioritize WebSockets?
+
+WebSockets are wonderful and can have substantial advantages over more traditional API paradigms like REST and various flavors of RPC.
+
+Unfortunately, most HTTP servers pretend WebSockets don't exist.
+
+This means developers need to "hack" support in through additional dependencies, hijacking connections etc and it all rarely adds up into something really great.
+
+I see no reason why Websockets should not work exceptionally well right out of the box, saving developers a lot of uncertainty and time researching which of the N ways to wedge WebSocket support in to an HTTP server is "best".
+
 ## What is Mummy not great for?
 
 Everything comes with trade-offs. Mummy is focused on being an exceptional API server. Think REST, JSON, RPC, WebSockets, HTML from templates etc.
