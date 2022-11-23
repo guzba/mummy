@@ -22,25 +22,25 @@ Mummy operates with this basic model: handle all socket IO multiplexed on one th
 
 This model has many great benefits and is ready to take advantage of continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
 
-## Why use Mummy?
+## Why use Mummy instead of async?
 
-When compared to async in Nim, Mummy means:
-
-* Never needing to use `{.async.}`, `await` and deal with [functions having colors](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/) ever again.
+* No more needing to use `{.async.}`, `Future[]`, `await`, etc and deal with [functions having colors](https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/).
 
 * Maintain the same excellent throughput of multiplexed nonblocking socket IO.
 
 * No concern that one blocking or expensive call will stall your entire server.
 
+* Async blocks on surprising things like DNS resolution and file reads which will stall all request handling.
+
 * Simpler to write request handlers. Blocking the thread is totally fine! Need to make a Postgres query? No problem, just wait for the results.
 
-* Takes advantage of multiple cores.
+* There is substantial advantage to writing simpler code vs theoretically fast but possibly convoluted and buggy code.
 
-When compared to traditional multi-threaded servers like Apache, Mummy:
+* Much simpler error handling and debugging. Async stack traces are huge and confusing.
 
-* Keeps your server's threads away from the socket. This has many benefits, one of which is preventing a malicious actor from easily blocking all of your server's threads with a low and slow attack.
+* Mummy handles the threading and dispatch so your handlers may not need to think about threads at all.
 
-* Maintains the same simple to write request handlers.
+* Takes advantage of multiple cores and the amazing work of the Nim team on ARC / ORC and Nim 2.0.
 
 ## What is Mummy not great for?
 
