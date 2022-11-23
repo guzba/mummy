@@ -51,6 +51,8 @@ type
   ) {.gcsafe.}
 
   ServerObj = object
+    port*: Port
+    address*: string
     handler: RequestHandler
     websocketHandler: WebSocketHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
@@ -876,6 +878,7 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     server.sendQueued.close()
   except:
     discard # Ignore
+  `=destroy`(server[])
   deallocShared(server)
 
 proc loopForever(
@@ -1071,9 +1074,16 @@ proc loopForever(
 proc close*(server: Server) {.raises: [], gcsafe.} =
   server.shutdown.trigger2()
 
-proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
+proc serve*(
+  server: Server,
+  port: Port,
+  address = "localhost"
+) {.raises: [MummyError].} =
   if server.socket.int != 0:
     raise newException(MummyError, "Server already has a socket")
+
+  server.port = port
+  server.address = address
 
   try:
     server.socket = createNativeSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, false)
@@ -1084,7 +1094,7 @@ proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
     server.socket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
 
     let ai = getAddrInfo(
-      "0.0.0.0",
+      address,
       port,
       AF_INET,
       SOCK_STREAM,
