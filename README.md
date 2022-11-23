@@ -113,4 +113,26 @@ server.serve(Port(8080))
 
 ## Performance
 
-## Testing
+Benchmarking HTTP servers is a bit like benchmarking running shoes.
+
+Certainly, there are some terrible shoes to run in (heels, clogs, etc), but once you're in a reasonable pair of shoes it is the runner that's going to matter, not the shoes.
+
+In this analogy, the runner is what your handers are actually doing and the shoes are the HTTP server choice.
+
+With that in mind, I suggest three priorities:
+
+1) Ensure your HTTP server choice does not unnecessarily hamper performance.
+
+2) Avoid HTTP servers that have easy performance vulnerabilities.
+
+3) Prioritize what will enable you to write and maintain performant and reliable handlers.
+
+For Mummy, I believe it clears all three priorities:
+
+1) Mummy prioritizes efficiency in receiving and dispatching incoming requests and sending outgoing responses. This means things like avoiding unnecessary memory copying, ensuring the CPU spends all of its time in your handlers.
+
+2) Because Mummy uses mulitplexed IO just like async, it is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to.
+
+3) Handlers with Mummy are just plain-old inline Nim code. This is as easy as it can be for maintenance, reliability and performance.
+
+## Benchmarks
