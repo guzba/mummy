@@ -4,7 +4,7 @@ proc handler(request: Request) =
   case request.uri:
   of "/":
     if request.httpMethod == "GET":
-      var headers: mummy.HttpHeaders
+      var headers: HttpHeaders
       headers["Content-Type"] = "text/plain"
       request.respond(200, headers, "Hello, World!")
     else:

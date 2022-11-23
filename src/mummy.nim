@@ -60,9 +60,9 @@ type
     selector: Selector[HandleData]
     responseQueued, sendQueued, shutdown: SelectEvent
     clientSockets: HashSet[SocketHandle]
-    workerQueue: Deque[WorkerTask]
-    workerQueueLock: Lock
-    workerQueueCond: Cond
+    taskQueue: Deque[WorkerTask]
+    taskQueueLock: Lock
+    taskQueueCond: Cond
     responseQueue: Deque[EncodedResponse]
     responseQueueLock: Lock
     sendQueue: Deque[EncodedFrame]
@@ -182,18 +182,18 @@ proc trigger2(
 
 proc workerProc(server: Server) =
   while true:
-    acquire(server.workerQueueLock)
+    acquire(server.taskQueueLock)
 
-    while server.workerQueue.len == 0 and not server.veryBad:
-      wait(server.workerQueueCond, server.workerQueueLock)
+    while server.taskQueue.len == 0 and not server.veryBad:
+      wait(server.taskQueueCond, server.taskQueueLock)
 
     if server.veryBad:
-      release(server.workerQueueLock)
+      release(server.taskQueueLock)
       return
 
-    var task = server.workerQueue.popFirst()
+    var task = server.taskQueue.popFirst()
 
-    release(server.workerQueueLock)
+    release(server.taskQueueLock)
 
     if task.request != nil:
       try:
@@ -377,10 +377,10 @@ proc upgradeToWebSocket*(
   request.respond(101, headers, "")
 
 proc dispatchTask(server: Server, task: WorkerTask) {.raises: [].} =
-  acquire(server.workerQueueLock)
-  server.workerQueue.addLast(task)
-  release(server.workerQueueLock)
-  signal(server.workerQueueCond)
+  acquire(server.taskQueueLock)
+  server.taskQueue.addLast(task)
+  release(server.taskQueueLock)
+  signal(server.taskQueueCond)
 
 proc dispatchWebSocketUpdate(
   websocket: WebSocket,
@@ -856,14 +856,14 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     server.socket.close()
   for clientSocket in server.clientSockets:
     clientSocket.close()
-  acquire(server.workerQueueLock)
+  acquire(server.taskQueueLock)
   server.veryBad = true
-  release(server.workerQueueLock)
-  broadcast(server.workerQueueCond)
+  release(server.taskQueueLock)
+  broadcast(server.taskQueueCond)
   if joinThreads:
     joinThreads(server.workerThreads)
-  deinitLock(server.workerQueueLock)
-  deinitCond(server.workerQueueCond)
+  deinitLock(server.taskQueueLock)
+  deinitCond(server.taskQueueCond)
   deinitLock(server.responseQueueLock)
   deinitLock(server.sendQueueLock)
   deinitLock(server.websocketQueuesLock)
@@ -1126,7 +1126,7 @@ proc serve*(server: Server, port: Port) {.raises: [MummyError].} =
 proc newServer*(
   handler: RequestHandler,
   websocketHandler: WebSocketHandler = nil,
-  workerThreads = max(countProcessors() - 1, 1),
+  workerThreads = max(countProcessors() - 1, 1) * 2,
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024 # 1 MB
 ): Server {.raises: [MummyError].} =
@@ -1139,8 +1139,8 @@ proc newServer*(
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
 
-  initLock(result.workerQueueLock)
-  initCond(result.workerQueueCond)
+  initLock(result.taskQueueLock)
+  initCond(result.taskQueueCond)
   initLock(result.responseQueueLock)
   initLock(result.sendQueueLock)
   initLock(result.websocketQueuesLock)
