@@ -715,6 +715,7 @@ proc afterRecvHttp(
           return true # We should have found it, close the connection
         return false # Try again after receiving more bytes
 
+      # After we know we've seen the end of the chunk length, parse it
       var chunkLen: int
       try:
         discard parseHex(
