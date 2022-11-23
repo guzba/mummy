@@ -62,7 +62,54 @@ Why is Mummy not great for large files? This is because Mummy dispatches fully r
 
 ## Example HTTP server
 
+```nim
+proc handler(request: Request) =
+  case request.uri:
+  of "/":
+    if request.httpMethod == "GET":
+      var headers: HttpHeaders
+      headers["Content-Type"] = "text/plain"
+      request.respond(200, headers, "Hello, World!")
+    else:
+      request.respond(405)
+  else:
+    request.respond(404)
+
+let server = newServer(handler)
+server.serve(Port(8080))
+```
+
 ## Example WebSocket server
+
+```nim
+proc handler(request: Request) =
+  case request.uri:
+  of "/":
+    if request.httpMethod == "GET":
+      let websocket = request.upgradeToWebSocket()
+    else:
+      request.respond(405)
+  else:
+    request.respond(404)
+
+proc websocketHandler(
+  websocket: WebSocket,
+  event: WebSocketEvent,
+  message: Message
+) =
+  case event:
+  of MessageEvent:
+    case message.kind:
+    of TextMessage:
+      echo message.data
+    else:
+      discard
+  else:
+    discard
+
+let server = newServer(handler, websocketHandler)
+server.serve(Port(8080))
+```
 
 ## Performance
 
