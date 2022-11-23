@@ -16,6 +16,6 @@ jobs:
       with:
         nim-version: ${{ matrix.nim-version }}
     - run: nimble install -y
-    - run: nimble intsall -y ws
+    - run: nimble install -y ws
     - run: nim c -r tests/test.nim
     - run: nim c -r tests/test_websockets.nim
