@@ -53,7 +53,7 @@ type
   ServerObj = object
     handler: RequestHandler
     websocketHandler: WebSocketHandler
-    maxHeadersLen, maxBodyLen: int
+    maxHeadersLen, maxBodyLen, maxMessageLen: int
     workerThreads: seq[Thread[Server]]
     veryBad: bool
     socket: SocketHandle
@@ -482,7 +482,7 @@ proc afterRecvWebSocket(
       payloadLen = l.htonl.int
       pos += 8
 
-    if handleData.frameState.frameLen + payloadLen > server.maxBodyLen:
+    if handleData.frameState.frameLen + payloadLen > server.maxMessageLen:
       return true # Message is too large, close the connection
 
     if handleData.bytesReceived < pos + 4:
@@ -1129,7 +1129,8 @@ proc newServer*(
   websocketHandler: WebSocketHandler = nil,
   workerThreads = max(countProcessors() - 1, 1) * 2,
   maxHeadersLen = 8 * 1024, # 8 KB
-  maxBodyLen = 1024 * 1024 # 1 MB
+  maxBodyLen = 1024 * 1024, # 1 MB
+  maxMessageLen = 64 * 1024 # 64 KB
 ): Server {.raises: [MummyError].} =
   if handler == nil:
     raise newException(MummyError, "The request handler must not be nil")
@@ -1139,6 +1140,7 @@ proc newServer*(
   result.websocketHandler = websocketHandler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
+  result.maxMessageLen = maxMessageLen
 
   initLock(result.taskQueueLock)
   initCond(result.taskQueueCond)

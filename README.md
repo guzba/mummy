@@ -55,5 +55,3 @@ Why is Mummy not great for large files? This is because Mummy dispatches fully r
 ## Performance
 
 ## Testing
-
-`nimble test`
