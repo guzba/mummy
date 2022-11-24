@@ -136,3 +136,11 @@ I believe Mummy clears all three priorities:
 3) Handlers with Mummy are just plain-old inline Nim code. This is as easy as it can be for maintenance, reliability and performance.
 
 ## Benchmarks
+
+`nim c -d:release -r tests/ab_mummyserver.nim`
+
+`nim c -d:release -r tests/ab_asynchttpserver.nim`
+
+`ab -n 10000 -c 100 -r -k http://localhost:8080/`
+
+`ab -n 1000 -c 10 -r http://localhost:8080/`
