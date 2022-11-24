@@ -141,6 +141,6 @@ I believe Mummy clears all three priorities:
 
 `nim c -d:release -r tests/ab_asynchttpserver.nim`
 
-`ab -n 10000 -c 100 -r -k http://localhost:8080/`
+`ab -n 10000 -c 100 -k http://localhost:8080/`
 
-`ab -n 1000 -c 10 -r http://localhost:8080/`
+`ab -n 10000 -c 100 http://localhost:8080/`

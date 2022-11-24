@@ -1,5 +1,9 @@
 import std/asynchttpserver, std/asyncdispatch, std/strutils
 
+var body: string
+for i in 0 ..< 1:
+  body &= "abcdefghijklmnopqrstuvwxyz"
+
 proc main {.async.} =
   let server = newAsyncHttpServer()
 
@@ -8,11 +12,13 @@ proc main {.async.} =
       if request.reqMethod == HttpGet:
         let headers = newHttpHeaders()
         headers["Content-Type"] = "text/plain"
+        headers["Content-Encoding"] = "identity"
         # Get keep-alive working with ab
         if request.headers.hasKey("Connection") and
           cmpIgnoreCase(request.headers["Connection"], "keep-alive") == 0:
           headers["Connection"] = "keep-alive"
-        await request.respond(Http200, "Hello, World!", headers)
+        {.gcsafe.}:
+          await request.respond(Http200, body, headers)
 
   server.listen(Port(8080))
 

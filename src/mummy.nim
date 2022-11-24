@@ -322,7 +322,12 @@ proc respond*(
   headers["Content-Length"] = $body.len
 
   encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
-  encodedResponse.buffer2 = move body
+  if encodedResponse.buffer1.len + body.len < 32 * 1024:
+    # There seems to be a harsh penalty on multiple send() calls on Linux
+    # with ab -k so just use 1 buffer if the body is small enough
+    encodedResponse.buffer1 &= body
+  else:
+    encodedResponse.buffer2 = move body
   encodedResponse.isWebSocketUpgrade = headers.headerContainsToken(
     "Upgrade",
     "websocket"
