@@ -939,9 +939,9 @@ proc loopForever(
           else:
             discard # TODO: log?
         elif eventHandleData.forEvent == server.sendQueued:
-          acquire(server.responseQueueLock)
+          acquire(server.sendQueueLock)
           let encodedFrame = server.sendQueue.popFirst()
-          release(server.responseQueueLock)
+          release(server.sendQueueLock)
 
           if encodedFrame.clientSocket in server.selector:
             let clientHandleData =
