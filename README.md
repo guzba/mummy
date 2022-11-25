@@ -18,7 +18,7 @@ Mummy has been written specifically to maximize the performance of your server h
 
 ## How is Mummy different?
 
-Mummy operates with this basic model: handle all socket IO multiplexed on one thread and dispatch incoming requests and WebSocket events to a pool of worker threads.
+Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. The request handler code is mostly free from thinking about threads.
 
 This model has many great benefits and is ready to take advantage of continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
 
@@ -41,6 +41,8 @@ This model has many great benefits and is ready to take advantage of continued s
 * Mummy handles the threading and dispatch so your handlers may not need to think about threads at all.
 
 * Takes advantage of multiple cores and the amazing work of the Nim team on ARC / ORC and Nim 2.0.
+
+* Big focus on stright forward error handling. Exceptions that happen in handler code are cought by default and will not bring the whole server down.
 
 ## Why prioritize WebSockets?
 
@@ -131,9 +133,9 @@ I believe Mummy clears all three priorities:
 
 1) Mummy prioritizes efficiency in receiving and dispatching incoming requests and sending outgoing responses. This means things like avoiding unnecessary memory copying, ensuring the CPU spends all of its time in your handlers.
 
-2) Because Mummy uses mulitplexed IO just like async, it is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to.
+2) Because Mummy uses mulitplexed IO just like async, it is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. And because it uses threads unlike async, a single CPU heavy or blocking operations will not stall your server.
 
-3) Handlers with Mummy are just plain-old inline Nim code. This is as easy as it can be for maintenance, reliability and performance.
+3) Handlers with Mummy are just plain-old inline Nim code. They have easy request-in/responce-out api, which is great for maintenance, reliability and performance.
 
 ## Benchmarks
 
