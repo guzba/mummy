@@ -138,7 +138,7 @@ proc hash*(websocket: WebSocket): Hash =
   h = h !& hash(websocket.clientSocket)
   return !$h
 
-proc pause() {.importc: "__builtin_ia32_pause", cdecl.}
+# proc pause() {.importc: "__builtin_ia32_pause", cdecl.}
 
 template withLock(lock: var Atomic[bool], body: untyped): untyped =
     ## TTAS
@@ -146,7 +146,7 @@ template withLock(lock: var Atomic[bool], body: untyped): untyped =
       if not exchange(lock, true, moAcquire): # If we got the lock
         break
       while load(lock, moRelaxed): # While still locked
-        pause()
+        discard # pause()
     try:
       body
     finally:
