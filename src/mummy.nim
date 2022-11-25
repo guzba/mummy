@@ -250,7 +250,7 @@ proc send*(
   data: sink string,
   kind = TextMessage,
 ) {.raises: [], gcsafe.} =
-  let encodedFrame = EncodedFrame()
+  var encodedFrame = EncodedFrame()
   encodedFrame.clientSocket = websocket.clientSocket
 
   case kind:
@@ -266,18 +266,18 @@ proc send*(
   encodedFrame.buffer2 = move data
 
   withLock websocket.server.sendQueueLock:
-    websocket.server.sendQueue.addLast(encodedFrame)
+    websocket.server.sendQueue.addLast(move encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
-  let encodedFrame = EncodedFrame()
+  var encodedFrame = EncodedFrame()
   encodedFrame.clientSocket = websocket.clientSocket
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
   withLock websocket.server.sendQueueLock:
-    websocket.server.sendQueue.addLast(encodedFrame)
+    websocket.server.sendQueue.addLast(move encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
