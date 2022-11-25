@@ -1,7 +1,7 @@
 import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
     std/hashes, std/locks, std/nativesockets, std/os, std/parseutils,
     std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
-    zippy
+    zippy, std/atomics
 
 export Port, common
 
@@ -17,7 +17,7 @@ const
   initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 type
-  RequestObj = object
+  Request* {.acyclic.} = ref object
     httpVersion*: HttpVersion
     httpMethod*: string
     uri*: string
@@ -25,8 +25,6 @@ type
     body*: string
     server: Server
     clientSocket: SocketHandle
-
-  Request* = ptr RequestObj
 
   RequestHandler* = proc(request: Request) {.gcsafe.}
 
@@ -66,11 +64,12 @@ type
     taskQueueLock: Lock
     taskQueueCond: Cond
     responseQueue: Deque[EncodedResponse]
-    responseQueueLock: Lock
+    responseQueueLock: Atomic[bool]
     sendQueue: Deque[EncodedFrame]
-    sendQueueLock: Lock
+    sendQueueLock: Atomic[bool]
+    websocketClaimed: Table[WebSocket, bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
-    websocketQueuesLock: Lock
+    websocketQueuesLock: Atomic[bool]
 
   Server* = ptr ServerObj
 
@@ -131,13 +130,27 @@ proc `$`*(request: Request): string =
   result &= " (" & $cast[uint](request) & ")"
 
 proc `$`*(websocket: WebSocket): string =
-  "WebSocket " & $hash(websocket)
+  "WebSocket " & $cast[uint](hash(websocket))
 
 proc hash*(websocket: WebSocket): Hash =
   var h: Hash
   h = h !& hash(websocket.server)
   h = h !& hash(websocket.clientSocket)
   return !$h
+
+proc pause() {.importc: "__builtin_ia32_pause", cdecl.}
+
+template withLock(lock: var Atomic[bool], body: untyped): untyped =
+    ## TTAS
+    while true:
+      if not exchange(lock, true, moAcquire): # If we got the lock
+        break
+      while load(lock, moRelaxed): # While still locked
+        pause()
+    try:
+      body
+    finally:
+      store(lock, false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
@@ -203,20 +216,22 @@ proc workerProc(server: Server) =
       except:
         # TODO: log?
         echo getCurrentExceptionMsg()
-      deallocShared(task.request)
     else: # WebSocket
       while true: # Process the entire websocket queue
         var update: WebSocketUpdate
-        acquire(server.websocketQueuesLock)
-        if task.websocket in server.websocketQueues:
-          try:
-            if server.websocketQueues[task.websocket].len > 0:
-              update = server.websocketQueues[task.websocket].popFirst()
-            else:
-              server.websocketQueues.del(task.websocket)
-          except KeyError:
-            discard
-        release(server.websocketQueuesLock)
+        withLock server.websocketQueuesLock:
+          if task.websocket in server.websocketQueues:
+            try:
+              if server.websocketQueues[task.websocket].len > 0:
+                server.websocketClaimed[task.websocket] = true
+                update = server.websocketQueues[task.websocket].popFirst()
+                if update.event == CloseEvent:
+                  server.websocketQueues.del(task.websocket)
+                  server.websocketClaimed.del(task.websocket)
+              else:
+                server.websocketClaimed[task.websocket] = false
+            except KeyError:
+              discard # Not possible
         if update == nil:
           break
 
@@ -250,9 +265,8 @@ proc send*(
 
   encodedFrame.buffer2 = move data
 
-  acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(encodedFrame)
-  release(websocket.server.sendQueueLock)
+  withLock websocket.server.sendQueueLock:
+    websocket.server.sendQueue.addLast(encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
@@ -262,9 +276,8 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
-  acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(encodedFrame)
-  release(websocket.server.sendQueueLock)
+  withLock websocket.server.sendQueueLock:
+    websocket.server.sendQueue.addLast(encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
@@ -333,9 +346,8 @@ proc respond*(
     "websocket"
   )
 
-  acquire(request.server.responseQueueLock)
-  request.server.responseQueue.addLast(move encodedResponse)
-  release(request.server.responseQueueLock)
+  withLock request.server.responseQueueLock:
+    request.server.responseQueue.addLast(move encodedResponse)
 
   request.server.responseQueued.trigger2()
 
@@ -397,22 +409,17 @@ proc dispatchWebSocketUpdate(
     # TODO: log?
     return
 
-  var needsWorkQueueEntry: bool
+  var needsTask: bool
 
-  acquire(websocket.server.websocketQueuesLock)
-  if websocket in websocket.server.websocketQueues:
+  withLock websocket.server.websocketQueuesLock:
     try:
       websocket.server.websocketQueues[websocket].addLast(update)
+      if not websocket.server.websocketClaimed[websocket]:
+        needsTask = true
     except KeyError:
       assert false # Notice this when not a release build
-  else:
-    var queue: Deque[WebSocketUpdate]
-    queue.addLast(update)
-    websocket.server.websocketQueues[websocket] = move queue
-    needsWorkQueueEntry = true
-  release(websocket.server.websocketQueuesLock)
 
-  if needsWorkQueueEntry:
+  if needsTask:
     websocket.server.dispatchTask(WorkerTask(websocket: websocket))
 
 proc sendCloseFrame(
@@ -591,7 +598,7 @@ proc popRequest(
   handleData: HandleData
 ): Request {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
-  result = cast[Request](allocShared0(sizeof(RequestObj)))
+  result = Request()
   result.server = server
   result.clientSocket = clientSocket
   result.httpVersion = handleData.requestState.httpVersion
@@ -872,9 +879,6 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     joinThreads(server.workerThreads)
   deinitLock(server.taskQueueLock)
   deinitCond(server.taskQueueCond)
-  deinitLock(server.responseQueueLock)
-  deinitLock(server.sendQueueLock)
-  deinitLock(server.websocketQueuesLock)
   try:
     server.responseQueued.close()
   except:
@@ -893,10 +897,14 @@ proc loopForever(
   var
     readyKeys: array[maxEventsPerSelectLoop, ReadyKey]
     receivedFrom, sentTo, needClosing: seq[SocketHandle]
+    encodedResponses: seq[EncodedResponse]
+    encodedFrames: seq[EncodedFrame]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
     needClosing.setLen(0)
+    encodedResponses.setLen(0)
+    encodedFrames.setLen(0)
     let readyCount = server.selector.selectInto(-1, readyKeys)
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
@@ -906,17 +914,11 @@ proc loopForever(
       if User in readyKey.events:
         let eventHandleData = server.selector.getData(readyKey.fd)
         if eventHandleData.forEvent == server.responseQueued:
-          while true:
-            var encodedResponse: EncodedResponse
-            acquire(server.responseQueueLock)
-            if server.responseQueue.len > 0:
-              encodedResponse = server.responseQueue.popFirst()
-            release(server.responseQueueLock)
+          withLock server.responseQueueLock:
+            while server.responseQueue.len > 0:
+              encodedResponses.add(server.responseQueue.popFirst())
 
-            if encodedResponse == nil:
-              # The queue is empty
-              break
-
+          for encodedResponse in encodedResponses:
             if encodedResponse.clientSocket in server.selector:
               let clientHandleData =
                 server.selector.getData(encodedResponse.clientSocket)
@@ -930,6 +932,14 @@ proc loopForever(
 
               if encodedResponse.isWebSocketUpgrade:
                 clientHandleData.upgradedToWebSocket = true
+                let websocket = WebSocket(
+                  server: server,
+                  clientSocket: encodedResponse.clientSocket
+                )
+                var websocketQueue: Deque[WebSocketUpdate]
+                withLock server.websocketQueuesLock:
+                  server.websocketQueues[websocket] = move websocketQueue
+                  server.websocketClaimed[websocket] = false
                 if clientHandleData.bytesReceived > 0:
                   # Why have we received bytes when we are upgrading the connection?
                   needClosing.add(readyKey.fd.SocketHandle)
@@ -951,17 +961,11 @@ proc loopForever(
             else:
               discard # TODO: log?
         elif eventHandleData.forEvent == server.sendQueued:
-          while true:
-            var encodedFrame: EncodedFrame
-            acquire(server.sendQueueLock)
-            if server.sendQueue.len > 0:
-              encodedFrame = server.sendQueue.popFirst()
-            release(server.sendQueueLock)
+          withLock server.sendQueueLock:
+            while server.sendQueue.len > 0:
+              encodedFrames.add(server.sendQueue.popFirst())
 
-            if encodedFrame == nil:
-              # The queue is empty
-              break
-
+          for encodedFrame in encodedFrames:
             if encodedFrame.clientSocket in server.selector:
               let clientHandleData =
                 server.selector.getData(encodedFrame.clientSocket)
@@ -1173,9 +1177,6 @@ proc newServer*(
 
   initLock(result.taskQueueLock)
   initCond(result.taskQueueCond)
-  initLock(result.responseQueueLock)
-  initLock(result.sendQueueLock)
-  initLock(result.websocketQueuesLock)
 
   result.workerThreads.setLen(workerThreads)
 
