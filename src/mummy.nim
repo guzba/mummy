@@ -936,7 +936,7 @@ proc loopForever(
                   server: server,
                   clientSocket: encodedResponse.clientSocket
                 )
-                var websocketQueue: Deque[WebSocketUpdate]
+                var websocketQueue = initDeque[WebSocketUpdate]()
                 withLock server.websocketQueuesLock:
                   server.websocketQueues[websocket] = move websocketQueue
                   server.websocketClaimed[websocket] = false
