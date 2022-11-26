@@ -85,10 +85,10 @@ type
       taskQueueLock: Lock
       taskQueueCond: Cond
     else:
-      epollFd: cint
-      taskQueuedFd, destroyCalledFd: cint
+      epollFd, destroyCalledFd: cint
+      taskQueuedFd: cint
       taskQueueLock: Atomic[bool]
-    destroyCalled: bool
+    destroyCalled: Atomic[bool]
     taskQueue: Deque[WorkerTask]
     responseQueue: Deque[EncodedResponse]
     responseQueueLock: Atomic[bool]
@@ -170,9 +170,9 @@ proc hash*(websocket: WebSocket): Hash =
 template withLock(lock: var Atomic[bool], body: untyped): untyped =
     ## TTAS
     while true:
-      if not exchange(lock, true, moAcquire): # If we got the lock
+      if not lock.exchange(true, moAcquire): # If we got the lock
         break
-      while load(lock, moRelaxed): # While still locked
+      while lock.load(moRelaxed): # While still locked
         discard # pause()
     try:
       body
@@ -293,9 +293,9 @@ proc workerProc(server: Server) =
       var
         task: WorkerTask
         poppedTask: bool
+      if server.destroyCalled.load(moRelaxed):
+        break
       withLock server.taskQueueLock:
-        if server.destroyCalled:
-          break
         if server.taskQueue.len > 0:
           task = server.taskQueue.popFirst()
           poppedTask = true
@@ -934,8 +934,7 @@ proc convertToOutgoingBuffer(encodedResponse: EncodedResponse): OutgoingBuffer =
   result.buffer2 = move encodedResponse.buffer2
 
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
-  withLock server.taskQueueLock:
-    server.destroyCalled = true
+  server.destroyCalled.store(true, moRelease)
   if server.selector != nil:
     try:
       server.selector.close()
