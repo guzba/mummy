@@ -990,21 +990,21 @@ proc loopForever(
 
     let readyCount = server.selector.selectInto(-1, readyKeys)
 
-    var responsesQueued, sendsQueued, shutdown: bool
+    var responseQueuedTriggered, sendQueuedTriggered, shutdownTriggered: bool
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
       if User in readyKey.events:
         let eventHandleData = server.selector.getData(readyKey.fd)
         if eventHandleData.forEvent == server.responseQueued:
-          responsesQueued = true
+          responseQueuedTriggered = true
         elif eventHandleData.forEvent == server.sendQueued:
-          sendsQueued = true
+          sendQueuedTriggered = true
         elif eventHandleData.forEvent == server.shutdown:
-          shutdown = true
+          shutdownTriggered = true
         else:
           discard
 
-    if responsesQueued:
+    if responseQueuedTriggered:
       withLock server.responseQueueLock:
         while server.responseQueue.len > 0:
           encodedResponses.add(server.responseQueue.popFirst())
@@ -1052,7 +1052,7 @@ proc loopForever(
         else:
           discard # TODO: log?
 
-    if sendsQueued:
+    if sendQueuedTriggered:
       withLock server.sendQueueLock:
         while server.sendQueue.len > 0:
           encodedFrames.add(server.sendQueue.popFirst())
@@ -1082,7 +1082,7 @@ proc loopForever(
         else:
           discard # TODO: log?
 
-    if shutdown:
+    if shutdownTriggered:
       server.destroy(true)
       return
 
