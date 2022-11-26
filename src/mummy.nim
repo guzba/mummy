@@ -13,12 +13,17 @@ else:
   proc eventfd(count: cuint, flags: cint): cint
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
-  proc trigger*(
-    efd: cint
-  ) {.raises: [].} =
+  proc trigger*(efd: cint) {.raises: [].} =
     var v: uint64 = 1
-    let ret = write(efd, v.addr, sizeof(uint64))
-    assert ret == 8
+    while true:
+      let ret = write(efd, v.addr, sizeof(uint64))
+      if ret != sizeof(uint64):
+        let err = osLastError()
+        if err == OSErrorCode(EAGAIN):
+          continue
+        # TODO: log?
+        echo osErrorMsg(err) & " (code: " & $err & ")"
+      break
 
 export Port, common
 
@@ -210,14 +215,65 @@ proc updateHandle2(
 proc trigger2(
   event: SelectEvent
 ) {.raises: [].} =
-  try:
-    event.trigger()
-  except:
-    # TODO: EAGAIN vs other, log
-    # Happens if SelectEvent has been closed
-    discard
+  while true:
+    try:
+      event.trigger()
+      break
+    except IOSelectorsException as e:
+      if e.msg.contains($EAGAIN): # Can this be better?
+        continue
+      # TODO: log?
+      echo e.msg
 
 proc workerProc(server: Server) =
+  ## The worker threads run the task queue here
+
+  proc runTask(task: WorkerTask) =
+    if task.request != nil:
+      try:
+        server.handler(task.request)
+      except:
+        # TODO: log?
+        echo getCurrentExceptionMsg()
+    else: # WebSocket
+      withLock server.websocketQueuesLock:
+        if server.websocketClaimed.getOrDefault(task.websocket, true):
+          # If this websocket has been claimed or if it is not present in
+          # the table (which indicates it has been closed), skip this task
+          return
+        # Claim this websocket
+        server.websocketClaimed[task.websocket] = true
+
+      while true: # Process the entire websocket queue
+        var update: WebSocketUpdate
+        withLock server.websocketQueuesLock:
+          try:
+            if server.websocketQueues[task.websocket].len > 0:
+              update = server.websocketQueues[task.websocket].popFirst()
+              if update.event == CloseEvent:
+                server.websocketQueues.del(task.websocket)
+                server.websocketClaimed.del(task.websocket)
+            else:
+              server.websocketClaimed[task.websocket] = false
+          except KeyError:
+            assert false # Notice this when not a release build
+
+        if update == nil:
+          break
+
+        try:
+          server.websocketHandler(
+            task.websocket,
+            update.event,
+            move update.message
+          )
+        except:
+          # TODO: log?
+          echo getCurrentExceptionMsg()
+
+        if update.event == CloseEvent:
+          break
+
   when useLockAndCond:
     while true:
       acquire(server.taskQueueLock)
@@ -229,44 +285,9 @@ proc workerProc(server: Server) =
         release(server.taskQueueLock)
         return
 
-      var task = server.taskQueue.popFirst()
-
+      let task = server.taskQueue.popFirst()
       release(server.taskQueueLock)
-
-      if task.request != nil:
-        try:
-          server.handler(task.request)
-        except:
-          # TODO: log?
-          echo getCurrentExceptionMsg()
-      else: # WebSocket
-        while true: # Process the entire websocket queue
-          var update: WebSocketUpdate
-          withLock server.websocketQueuesLock:
-            if task.websocket in server.websocketQueues:
-              try:
-                if server.websocketQueues[task.websocket].len > 0:
-                  server.websocketClaimed[task.websocket] = true
-                  update = server.websocketQueues[task.websocket].popFirst()
-                  if update.event == CloseEvent:
-                    server.websocketQueues.del(task.websocket)
-                    server.websocketClaimed.del(task.websocket)
-                else:
-                  server.websocketClaimed[task.websocket] = false
-              except KeyError:
-                discard # Not possible
-          if update == nil:
-            break
-
-          try:
-            server.websocketHandler(
-              task.websocket,
-              update.event,
-              move update.message
-            )
-          except:
-            # TODO: log?
-            echo getCurrentExceptionMsg()
+      runTask(task)
   else:
     while true:
       var
@@ -279,12 +300,7 @@ proc workerProc(server: Server) =
           task = server.taskQueue.popFirst()
           poppedTask = true
       if poppedTask:
-        if task.request != nil:
-          try:
-            server.handler(task.request)
-          except:
-            # TODO: log?
-            echo getCurrentExceptionMsg()
+        runTask(task)
       else:
         # Wait to be woken up
         var event: EpollEvent
@@ -299,7 +315,7 @@ proc workerProc(server: Server) =
             raiseOSError(err)
           # Thread has woken up, loop back to top and check on task queue
         else:
-          assert false
+          assert false # Notice this when not a release build
 
 proc send*(
   websocket: WebSocket,
@@ -458,11 +474,6 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
     signal(server.taskQueueCond)
   else:
     server.taskQueuedFd.trigger()
-
-  # try:
-  #   server.handler(task.request)
-  # except:
-  #   discard
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
@@ -652,7 +663,6 @@ proc afterRecvWebSocket(
           event: MessageEvent,
           message: move message
         )
-
       websocket.postWebSocketUpdate(update)
 
 proc popRequest(
@@ -931,7 +941,6 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       server.selector.close()
     except:
       discard # Ignore
-  server.selector = nil # Since this lives on a pointer
   if server.socket.int != 0:
     server.socket.close()
   for clientSocket in server.clientSockets:
@@ -942,22 +951,26 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     server.destroyCalledFd.trigger()
   if joinThreads:
     joinThreads(server.workerThreads)
-  when useLockAndCond:
-    deinitLock(server.taskQueueLock)
-    deinitCond(server.taskQueueCond)
+    when useLockAndCond:
+      deinitLock(server.taskQueueLock)
+      deinitCond(server.taskQueueCond)
+    else:
+      discard server.taskQueuedFd.close()
+      discard server.epollFd.close()
+    try:
+      server.responseQueued.close()
+    except:
+      discard # Ignore
+    try:
+      server.sendQueued.close()
+    except:
+      discard # Ignore
+    `=destroy`(server[])
+    deallocShared(server)
   else:
-    discard close(server.taskQueuedFd)
-    discard close(server.epollFd)
-  try:
-    server.responseQueued.close()
-  except:
-    discard # Ignore
-  try:
-    server.sendQueued.close()
-  except:
-    discard # Ignore
-  `=destroy`(server[])
-  deallocShared(server)
+    # This is not a clean exit, leak to avoid potential segfaults for now
+    # The process is likely going to be exiting anyway
+    discard
 
 proc loopForever(
   server: Server,
@@ -1162,10 +1175,10 @@ proc loopForever(
         server.selector.unregister(clientSocket)
       except:
         # Leaks HandleData for this socket
-        # Raise as a serve() exception?
-        raise cast[ref IOSelectorsException](getCurrentException())
+        # TODO: log?
+        discard
       finally:
-        clientSocket.close()
+        close(clientSocket)
         server.clientSockets.excl(clientSocket)
       if handleData.upgradedToWebSocket:
         let websocket = WebSocket(server: server, clientSocket: clientSocket)
@@ -1176,8 +1189,10 @@ proc loopForever(
         websocket.postWebSocketUpdate(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
-  # Needs to have called serve() called
-  server.shutdown.trigger2()
+  if server.socket.int != 0:
+    server.shutdown.trigger2()
+  else:
+    server.destroy(true)
 
 proc serve*(
   server: Server,
