@@ -18,7 +18,7 @@ Mummy has been written specifically to maximize the performance of your server h
 
 ## How is Mummy different?
 
-Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. The request handler code is mostly free from thinking about threads.
+Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. Your HTTP handlers probably won't even need to think about threads at all.
 
 This model has many great benefits and is ready to take advantage of continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
 
@@ -36,13 +36,13 @@ This model has many great benefits and is ready to take advantage of continued s
 
 * There is substantial advantage to writing simpler code vs theoretically fast but possibly convoluted and buggy code.
 
-* Much simpler error handling and debugging. Async stack traces are huge and confusing.
+* Much simpler debugging. Async stack traces are huge and confusing.
+
+* Easier error handling, just `try except` like you normally do. Uncaught exceptions in Mummy handlers also do not bring down your entire server.
 
 * Mummy handles the threading and dispatch so your handlers may not need to think about threads at all.
 
 * Takes advantage of multiple cores and the amazing work of the Nim team on ARC / ORC and Nim 2.0.
-
-* Big focus on stright forward error handling. Exceptions that happen in handler code are cought by default and will not bring the whole server down.
 
 ## Why prioritize WebSockets?
 
@@ -50,7 +50,7 @@ WebSockets are wonderful and can have substantial advantages over more tradition
 
 Unfortunately, most HTTP servers pretend WebSockets don't exist.
 
-This means developers need to "hack" support in through additional dependencies, hijacking connections etc and it all rarely adds up into something really great.
+This means developers need to hack support in through additional dependencies, hijacking connections etc and it all rarely adds up into something really great.
 
 I see no reason why Websockets should not work exceptionally well right out of the box, saving developers a lot of uncertainty and time researching which of the possible ways to wedge WebSocket support in to an HTTP server is "best".
 
@@ -133,9 +133,9 @@ I believe Mummy clears all three priorities:
 
 1) Mummy prioritizes efficiency in receiving and dispatching incoming requests and sending outgoing responses. This means things like avoiding unnecessary memory copying, ensuring the CPU spends all of its time in your handlers.
 
-2) Because Mummy uses mulitplexed IO just like async, it is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. And because it uses threads unlike async, a single CPU heavy or blocking operations will not stall your server.
+2) Because Mummy uses mulitplexed IO just like async, Mummy is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. Additionally, while a single blocking or CPU heavy operation can stall an entire ansync server, this is not a problem for Mummy.
 
-3) Handlers with Mummy are just plain-old inline Nim code. They have easy request-in/responce-out api, which is great for maintenance, reliability and performance.
+3) Handlers with Mummy are just plain-old inline Nim code. They have straightforward request-in-response-out API. Keeping things simple is great for maintenance, reliability and performance.
 
 ## Benchmarks
 
