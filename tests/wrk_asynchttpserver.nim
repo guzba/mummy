@@ -6,11 +6,8 @@ proc main {.async.} =
   proc cb(request: Request) {.async.} =
     if request.url.path == "/":
       if request.reqMethod == HttpGet:
-        let headers = newHttpHeaders()
-        headers["Content-Type"] = "text/plain"
-        headers["Content-Encoding"] = "identity"
         {.gcsafe.}:
-          await request.respond(Http200, responseBody, headers)
+          await request.respond(Http200, responseBody)
 
   server.listen(Port(8080))
 

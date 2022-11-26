@@ -5,8 +5,6 @@ proc handler(request: Request) =
   of "/":
     if request.httpMethod == "GET":
       var headers: HttpHeaders
-      headers["Content-Type"] = "text/plain"
-      headers["Content-Encoding"] = "identity"
       {.gcsafe.}:
         request.respond(200, headers, responseBody)
     else:
