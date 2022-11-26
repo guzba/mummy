@@ -1,8 +1,4 @@
-import mummy
-
-var body: string
-for i in 0 ..< 1:
-  body &= "abcdefghijklmnopqrstuvwxyz"
+import mummy, wrk_shared
 
 proc handler(request: Request) =
   case request.uri:
@@ -12,7 +8,7 @@ proc handler(request: Request) =
       headers["Content-Type"] = "text/plain"
       headers["Content-Encoding"] = "identity"
       {.gcsafe.}:
-        request.respond(200, headers, body)
+        request.respond(200, headers, responseBody)
     else:
       request.respond(405)
   else:

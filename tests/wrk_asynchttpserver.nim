@@ -1,8 +1,4 @@
-import std/asynchttpserver, std/asyncdispatch, std/strutils
-
-var body: string
-for i in 0 ..< 1:
-  body &= "abcdefghijklmnopqrstuvwxyz"
+import std/asynchttpserver, std/asyncdispatch, std/strutils, wrk_shared
 
 proc main {.async.} =
   let server = newAsyncHttpServer()
@@ -13,12 +9,8 @@ proc main {.async.} =
         let headers = newHttpHeaders()
         headers["Content-Type"] = "text/plain"
         headers["Content-Encoding"] = "identity"
-        # Get keep-alive working with ab
-        if request.headers.hasKey("Connection") and
-          cmpIgnoreCase(request.headers["Connection"], "keep-alive") == 0:
-          headers["Connection"] = "keep-alive"
         {.gcsafe.}:
-          await request.respond(Http200, body, headers)
+          await request.respond(Http200, responseBody, headers)
 
   server.listen(Port(8080))
 
