@@ -13,4 +13,5 @@ proc handler(request: Request) =
     request.respond(404)
 
 let server = newServer(handler)
+echo "Serving on http://localhost:8080"
 server.serve(Port(8080))

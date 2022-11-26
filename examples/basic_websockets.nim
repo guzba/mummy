@@ -3,8 +3,21 @@ import mummy
 proc handler(request: Request) =
   case request.uri:
   of "/":
+    var headers: HttpHeaders
+    headers["Content-Type"] = "text/html"
+    request.respond(200, headers, """
+    <script>
+      var ws = new WebSocket("ws://localhost:8080/ws");
+      ws.onmessage = function (event) {
+        document.body.innerHTML = event.data;
+      };
+    </script>
+    """)
+  of "/ws":
     if request.httpMethod == "GET":
       let websocket = request.upgradeToWebSocket()
+      websocket.send("Hello world from WebSocket!")
+      websocket.close()
     else:
       request.respond(405)
   else:
@@ -26,4 +39,5 @@ proc websocketHandler(
     discard
 
 let server = newServer(handler, websocketHandler)
+echo "Serving on http://localhost:8080"
 server.serve(Port(8080))
