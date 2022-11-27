@@ -196,12 +196,7 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
     if cmpIgnoreCase(k, key) == 0:
       var first = 0
       while first < v.len:
-        var comma = -1
-        for i in first ..< v.len:
-          if v[i] == ',':
-            comma = i
-            break
-        # var comma = v.find(',', start = first)
+        var comma = v.find(',', start = first)
         if comma == -1:
           comma = v.len
         var len = comma - first
