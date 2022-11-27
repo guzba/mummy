@@ -39,19 +39,70 @@ proc encodeHeaders*(
   statusCode: int,
   headers: HttpHeaders
 ): string {.raises: [], gcsafe.} =
-  let statusLine = "HTTP/1.1 " & $statusCode & "\r\n"
+  let
+    statusCode = $statusCode
+    statusLineLen = 9 + statusCode.len + 2
 
-  var headersLen = statusLine.len
+  var headersLen = statusLineLen
   for (k, v) in headers:
     # k + ": " + v + "\r\n"
     headersLen += k.len + 2 + v.len + 2
   # "\r\n"
   headersLen += 2
 
-  result = newStringOfCap(headersLen)
-  result.add statusLine
+  result = newString(headersLen)
+  result[0] = 'H'
+  result[1] = 'T'
+  result[2] = 'T'
+  result[3] = 'P'
+  result[4] = '/'
+  result[5] = '1'
+  result[6] = '.'
+  result[7] = '1'
+  result[8] = ' '
+
+  var pos = 9
+  copyMem(
+    result[pos].addr,
+    statusCode[0].unsafeAddr,
+    statusCode.len
+  )
+  pos += statusCode.len
+
+  result[pos + 0] = '\r'
+  result[pos + 1] = '\n'
+  pos += 2
 
   for (k, v) in headers:
-    result.add k & ": " & v & "\r\n" # Optimizable
+    copyMem(
+      result[pos].addr,
+      k.cstring,
+      k.len
+    )
+    pos += k.len
 
-  result.add "\r\n"
+    result[pos + 0] = ':'
+    result[pos + 1] = ' '
+    pos += 2
+
+    copyMem(
+      result[pos].addr,
+      v.cstring,
+      v.len
+    )
+    pos += v.len
+
+    result[pos + 0] = '\r'
+    result[pos + 1] = '\n'
+    pos += 2
+
+  result[pos + 0] = '\r'
+  result[pos + 1] = '\n'
+  pos += 2
+
+  # ^ This but with more allocations
+  # result = newStringOfCap(headersLen)
+  # result.add statusLine
+  # for (k, v) in headers:
+  #   result.add k & ": " & v & "\r\n" # Optimizable
+  # result.add "\r\n"
