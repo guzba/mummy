@@ -4,6 +4,8 @@ import std/random
 
 randomize()
 
+const iterations = 1000
+
 proc randomWhitespace(): string =
   let len = rand(0 ..< 10)
   for i in 0 ..< len:
@@ -22,7 +24,7 @@ block:
           break
       result &= c.char
 
-  for i in 0 ..< 1000:
+  for i in 0 ..< iterations:
     var tokens: seq[seq[string]]
     tokens.setLen(10)
 
@@ -79,7 +81,7 @@ block:
   block:
     echo "Headers"
 
-    for i in 0 ..< 1000:
+    for i in 0 ..< iterations:
       let handleData = HandleData()
 
       # Add request line
@@ -132,7 +134,7 @@ block:
   block:
     echo "Transfer-Encoding: chunked"
 
-    for i in 0 ..< 1000:
+    for i in 0 ..< iterations:
       let handleData = HandleData()
 
       handleData.recvBuffer.add("GET / HTTP/1.1\r\n")
@@ -158,10 +160,10 @@ block:
 
       handleData.recvBuffer.add(encoded)
 
-      handleData.bytesReceived = handleData.recvBuffer.len
-
       # Add some junk the end
       handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+
+      handleData.bytesReceived = handleData.recvBuffer.len
 
       var newRequests: seq[Request]
       let closingConnection = server.afterRecvHttp(
@@ -179,7 +181,7 @@ block:
   block:
     echo "Content-Length"
 
-    for i in 0 ..< 1000:
+    for i in 0 ..< iterations:
       let handleData = HandleData()
 
       var body: string
@@ -191,20 +193,41 @@ block:
       handleData.recvBuffer.add("\r\n")
       handleData.recvBuffer.add(body)
 
-      handleData.bytesReceived = handleData.recvBuffer.len
-
       # Add some junk the end
       handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
 
-      var newRequests: seq[Request]
-      let closingConnection = server.afterRecvHttp(
-        clientSocket,
-        handleData,
-        newRequests
-      )
-      if not closingConnection:
-        let request = newRequests[0]
-        doAssert request.headers.headerContainsToken(
-          "Content-Length", $body.len
+      handleData.bytesReceived = handleData.recvBuffer.len
+
+      block:
+        # Not truncated
+        var newRequests: seq[Request]
+        let closingConnection = server.afterRecvHttp(
+          clientSocket,
+          handleData,
+          newRequests
         )
-        doAssert request.body == body
+        if not closingConnection:
+          let request = newRequests[0]
+          doAssert request.headers.headerContainsToken(
+            "Content-Length", $body.len
+          )
+          doAssert request.body == body
+
+      block:
+        # Truncated
+        handleData.recvBuffer.setLen(rand(0 ..< handleData.recvBuffer.len))
+
+        handleData.bytesReceived = handleData.recvBuffer.len
+
+        var newRequests: seq[Request]
+        discard server.afterRecvHttp(
+          clientSocket,
+          handleData,
+          newRequests
+        )
+
+# block:
+#   echo "Fuzzing afterRecvWebSocket"
+
+#   # Assemble 1 or more complete frames
+#   # Stitch together some continuation frames
