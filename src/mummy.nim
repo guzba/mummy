@@ -819,7 +819,7 @@ proc afterRecvHttp(
       if parts.len == 2:
         handleData.requestState.headers.add((parts[0].strip(), parts[1].strip()))
       else:
-        handleData.requestState.headers.add((headerLines[i].strip(), ""))
+        handleData.requestState.headers.add((headerLines[i], ""))
 
 
 
