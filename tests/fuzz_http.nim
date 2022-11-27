@@ -130,7 +130,7 @@ block:
           doAssert headers[i] in request.headers
 
   block:
-    echo "Chunked"
+    echo "Transfer-Encoding: chunked"
 
     for i in 0 ..< 1000:
       let handleData = HandleData()
@@ -160,6 +160,9 @@ block:
 
       handleData.bytesReceived = handleData.recvBuffer.len
 
+      # Add some junk the end
+      handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+
       var newRequests: seq[Request]
       let closingConnection = server.afterRecvHttp(
         clientSocket,
@@ -170,5 +173,38 @@ block:
         let request = newRequests[0]
         doAssert request.headers.headerContainsToken(
           "Transfer-Encoding", "chunked"
+        )
+        doAssert request.body == body
+
+  block:
+    echo "Content-Length"
+
+    for i in 0 ..< 1000:
+      let handleData = HandleData()
+
+      var body: string
+      for i in 0 ..< rand(1 ..< 1000):
+        body &= randomAsciiString()
+
+      handleData.recvBuffer.add("GET / HTTP/1.1\r\n")
+      handleData.recvBuffer.add("Content-Length: " & $body.len & "\r\n")
+      handleData.recvBuffer.add("\r\n")
+      handleData.recvBuffer.add(body)
+
+      handleData.bytesReceived = handleData.recvBuffer.len
+
+      # Add some junk the end
+      handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+
+      var newRequests: seq[Request]
+      let closingConnection = server.afterRecvHttp(
+        clientSocket,
+        handleData,
+        newRequests
+      )
+      if not closingConnection:
+        let request = newRequests[0]
+        doAssert request.headers.headerContainsToken(
+          "Content-Length", $body.len
         )
         doAssert request.body == body
