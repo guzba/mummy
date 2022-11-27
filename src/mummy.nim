@@ -38,6 +38,10 @@ const
   maxEventsPerSelectLoop = 64
   initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
+let
+  http10 = "HTTP/1.0"
+  http11 = "HTTP/1.1"
+
 type
   Request* {.acyclic.} = ref object
     httpVersion*: HttpVersion
@@ -768,19 +772,85 @@ proc afterRecvHttp(
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
-
-
-
-
-
-
-
-
-
-
-
-
     # We have the headers, now to parse them
+
+    var lineNum, lineStart: int
+    while lineStart < headersEnd:
+      # echo "START: ", lineStart
+      var lineEnd = handleData.recvBuffer.find(
+        "\r\n",
+        lineStart,
+        headersEnd
+      )
+      if lineEnd == -1:
+        lineEnd = headersEnd
+
+      # echo "LINEEND: ", lineEnd
+
+      var lineLen = lineEnd - lineStart
+      while lineLen > 0 and handleData.recvBuffer[lineStart] in Whitespace:
+        inc lineStart
+        dec lineLen
+      while lineLen > 0 and
+        handleData.recvBuffer[lineStart + lineLen - 1] in Whitespace:
+        dec lineLen
+
+      # echo "LINELEN: ", lineLen
+
+      # echo "LINE: ", handleData.recvBuffer[lineStart ..< lineStart + lineLen]
+
+      if lineNum == 0: # This is the request line
+        let space1 = handleData.recvBuffer.find(
+          ' ',
+          lineStart, lineStart + lineLen - 1
+        )
+        if space1 == -1:
+          return true # Invalid request line, close the connection
+        handleData.requestState.httpMethod = handleData.recvBuffer[lineStart ..< space1]
+        var remainingLen = lineLen - (space1 + 1 - lineStart)
+        let space2 = handleData.recvBuffer.find(
+          ' ',
+          space1 + 1, space1 + 1 + remainingLen - 1
+        )
+        if space2 == -1:
+          return true # Invalid request line, close the connection
+        handleData.requestState.uri = handleData.recvBuffer[space1 + 1 ..< space2]
+        if handleData.recvBuffer.find(
+          ' ',
+          space2 + 1, lineStart + lineLen - 1
+        ) != -1:
+          return true # Invalid request line, close the connection
+        let httpVersionLen = lineLen - (space2 + 1 - lineStart)
+        if httpVersionLen != 8:
+          return true # Invalid request line, close the connection
+        if equalMem(
+          handleData.recvBuffer[space2 + 1].addr,
+          http11[0].unsafeAddr,
+          8
+        ):
+          handleData.requestState.httpVersion = Http11
+        elif equalMem(
+          handleData.recvBuffer[space2 + 1].addr,
+          http10[0].unsafeAddr,
+          8
+        ):
+          handleData.requestState.httpVersion = Http10
+        else:
+          return true # Unsupported HTTP version, close the connection
+      else: # This is a header
+        discard
+
+
+
+      lineStart = lineEnd + 2
+      inc lineNum
+
+
+
+
+
+
+
     var
       headerLines: seq[string]
       nextLineStart: int
@@ -798,21 +868,21 @@ proc afterRecvHttp(
         headerLines.add(handleData.recvBuffer[nextLineStart ..< lineEnd].strip())
         nextLineStart = lineEnd + 2
 
-    let
-      requestLine = headerLines[0]
-      requestLineParts = requestLine.split(" ")
-    if requestLineParts.len != 3:
-      return true # Malformed request line, close the connection
+    # let
+    #   requestLine = headerLines[0]
+    #   requestLineParts = requestLine.split(" ")
+    # if requestLineParts.len != 3:
+    #   return true # Malformed request line, close the connection
 
-    handleData.requestState.httpMethod = requestLineParts[0]
-    handleData.requestState.uri = requestLineParts[1]
+    # handleData.requestState.httpMethod = requestLineParts[0]
+    # handleData.requestState.uri = requestLineParts[1]
 
-    if requestLineParts[2] == "HTTP/1.0":
-      handleData.requestState.httpVersion = Http10
-    elif requestLineParts[2] == "HTTP/1.1":
-      handleData.requestState.httpVersion = Http11
-    else:
-      return true # Unsupported HTTP version, close the connection
+    # if requestLineParts[2] == "HTTP/1.0":
+    #   handleData.requestState.httpVersion = Http10
+    # elif requestLineParts[2] == "HTTP/1.1":
+    #   handleData.requestState.httpVersion = Http11
+    # else:
+    #   return true # Unsupported HTTP version, close the connection
 
     for i in 1 ..< headerLines.len:
       let parts = headerLines[i].split(":")
