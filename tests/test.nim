@@ -2,8 +2,13 @@ import mummy {.all.}
 
 block:
   var headers: HttpHeaders
+  headers["0"] = "a"
   headers["1"] = "a,b"
   headers["2"] = "a, bbbb,cc  ,     dd   ,,"
+
+  doAssert headers.headerContainsToken("0", "a")
+  doAssert headers.headerContainsToken("0", "A")
+  doAssert not headers.headerContainsToken("0", "b")
 
   doAssert headers.headerContainsToken("1", "a")
   doAssert headers.headerContainsToken("1", "A")
