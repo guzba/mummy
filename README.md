@@ -139,10 +139,6 @@ I believe Mummy clears all three priorities:
 
 ## Benchmarks
 
-`nim c -d:release -r tests/ab_mummyserver.nim`
+## Testing
 
-`nim c -d:release -r tests/ab_asynchttpserver.nim`
-
-`ab -n 10000 -c 100 -k http://localhost:8080/`
-
-`ab -n 10000 -c 100 http://localhost:8080/`
+A fuzzer has been run against Mummy's socket reading and parsing code to ensure Mummy does not crash or otherwise misbehave on bad data from sockets. You can run the fuzzer any time by running `nim c -r tests/fuzz_recv.nim`.
