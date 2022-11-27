@@ -188,7 +188,7 @@ template withLock(lock: var Atomic[bool], body: untyped): untyped =
     try:
       body
     finally:
-      store(lock, false, moRelease)
+      lock.store(false, moRelease)
     # # TTAS
     # while true:
     #   if not lock.exchange(true, moAcquire): # If we got the lock
@@ -198,7 +198,7 @@ template withLock(lock: var Atomic[bool], body: untyped): untyped =
     # try:
     #   body
     # finally:
-    #   store(lock, false, moRelease)
+    #   lock.store(false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
