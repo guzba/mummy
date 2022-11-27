@@ -527,10 +527,19 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
     server.taskQueuedFds[shard].trigger()
     inc server.taskNum
 
-  # try:
-  #   server.handler(task.request)
-  # except:
-  #   echo getCurrentExceptionMsg()
+proc postTasks(server: Server, tasks: seq[WorkerTask]) {.raises: [].} =
+  when useLockAndCond:
+    withLock server.taskQueueLock:
+      for i in 0 ..< tasks.len:
+        server.taskQueue.addLast(tasks[i])
+    signal(server.taskQueueCond)
+  else:
+    let shard = server.taskNum mod cast[uint64](server.lockShards)
+    withLock server.taskQueueLocks[shard]:
+      for i in 0 ..< tasks.len:
+        server.taskQueues[shard].addLast(tasks[i])
+    server.taskQueuedFds[shard].trigger()
+    inc server.taskNum
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
@@ -744,7 +753,8 @@ proc popRequest(
 proc afterRecvHttp(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  handleData: HandleData,
+  newRequests: var seq[Request]
 ): bool {.raises: [].} =
   # Have we completed parsing the headers?
   if not handleData.requestState.headersParsed:
@@ -1007,8 +1017,7 @@ proc afterRecvHttp(
       handleData.bytesReceived = bytesRemaining
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
-        let request = server.popRequest(clientSocket, handleData)
-        server.postTask(WorkerTask(request: request))
+        newRequests.add(server.popRequest(clientSocket, handleData))
         return false
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
@@ -1044,20 +1053,7 @@ proc afterRecvHttp(
         )
         handleData.bytesReceived = bytesRemaining
 
-    let request = server.popRequest(clientSocket, handleData)
-    server.postTask(WorkerTask(request: request))
-
-proc afterRecv(
-  server: Server,
-  clientSocket: SocketHandle,
-  handleData: HandleData
-): bool {.raises: [IOSelectorsException].} =
-  # Have we upgraded this connection to a websocket?
-  # If not, treat incoming bytes as part of HTTP requests.
-  if handleData.upgradedToWebSocket:
-    server.afterRecvWebSocket(clientSocket, handleData)
-  else:
-    server.afterRecvHttp(clientSocket, handleData)
+    newRequests.add(server.popRequest(clientSocket, handleData))
 
 proc afterSend(
   server: Server,
@@ -1138,12 +1134,15 @@ proc loopForever(
   var
     readyKeys: array[maxEventsPerSelectLoop, ReadyKey]
     receivedFrom, sentTo, needClosing: seq[SocketHandle]
+    newRequests: seq[Request]
+    tasks: seq[WorkerTask]
     encodedResponses: seq[OutgoingBuffer]
     encodedFrames: seq[OutgoingBuffer]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
     needClosing.setLen(0)
+    newRequests.setLen(0)
     encodedResponses.setLen(0)
     encodedFrames.setLen(0)
 
@@ -1327,9 +1326,21 @@ proc loopForever(
         continue
       let
         handleData = server.selector.getData(clientSocket)
-        needsClosing = server.afterRecv(clientSocket, handleData)
+        needsClosing =
+          # Have we upgraded this connection to a websocket?
+          # If not, treat incoming bytes as part of HTTP requests.
+          if handleData.upgradedToWebSocket:
+            server.afterRecvWebSocket(clientSocket, handleData)
+          else:
+            server.afterRecvHttp(clientSocket, handleData, newRequests)
       if needsClosing:
         needClosing.add(clientSocket)
+
+    if newRequests.len > 0:
+      tasks.setLen(newRequests.len)
+      for i in 0 ..< newRequests.len:
+        tasks[i] = WorkerTask(request: move newRequests[i])
+      server.postTasks(tasks)
 
     for clientSocket in sentTo:
       if clientSocket in needClosing:
@@ -1465,7 +1476,7 @@ proc newServer*(
       initLock(result.taskQueueLock)
       initCond(result.taskQueueCond)
     else:
-      result.lockShards = max(countProcessors() - 1, 1)
+      result.lockShards = 1 #max(countProcessors() - 1, 1)
 
       result.epollFd = epoll_create1(O_CLOEXEC)
       if result.epollFd < 0:
@@ -1514,3 +1525,5 @@ proc newServer*(
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
+
+# echo getThreadId()
