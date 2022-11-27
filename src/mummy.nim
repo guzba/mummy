@@ -426,7 +426,7 @@ proc respond*(
 
   if encodedResponse.closeConnection:
     headers["Connection"] = "close"
-  elif request.httpVersion == Http10 or "Connection" notin headers:
+  elif request.httpVersion == Http10:
     headers["Connection"] = "keep-alive"
 
   # If the body is big enough to justify compressing and not already compressed
