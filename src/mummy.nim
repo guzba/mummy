@@ -214,7 +214,7 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
           if matches:
             return true
         first = comma + 1
-      # ^ Does this but with allocations
+      # Above does the same thing but without the allocations
       # var parts = v.split(",")
       # for part in parts.mitems:
       #   if cmpIgnoreCase(part.strip(), token) == 0:
@@ -866,7 +866,7 @@ proc afterRecvHttp(
       lineStart = lineEnd + 2
       inc lineNum
 
-    # ^ Does this but with way more allocations
+    # Above does the same thing but without so many allocations
     # var
     #   headerLines: seq[string]
     #   nextLineStart: int
