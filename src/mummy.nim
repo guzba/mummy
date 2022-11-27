@@ -258,8 +258,9 @@ proc trigger2(
       event.trigger()
       break
     except IOSelectorsException as e:
-      if e.msg.contains($EAGAIN): # Can this be better?
-        continue
+      when defined(linux):
+        if e.msg.contains($EAGAIN): # Can this be better?
+          continue
       # TODO: log?
       echo e.msg
 
