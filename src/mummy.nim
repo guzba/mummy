@@ -224,7 +224,7 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
             if matches:
               return true
           first = comma + 1
-        # ^ Does this without allocations
+        # ^ Does this but with allocations
         # var parts = v.split(",")
         # for part in parts.mitems:
         #   if cmpIgnoreCase(part.strip(), token) == 0:
@@ -795,7 +795,8 @@ proc afterRecvHttp(
       if lineNum == 0: # This is the request line
         let space1 = handleData.recvBuffer.find(
           ' ',
-          lineStart, lineStart + lineLen - 1
+          lineStart,
+          lineStart + lineLen - 1
         )
         if space1 == -1:
           return true # Invalid request line, close the connection
@@ -803,14 +804,16 @@ proc afterRecvHttp(
         var remainingLen = lineLen - (space1 + 1 - lineStart)
         let space2 = handleData.recvBuffer.find(
           ' ',
-          space1 + 1, space1 + 1 + remainingLen - 1
+          space1 + 1,
+          space1 + 1 + remainingLen - 1
         )
         if space2 == -1:
           return true # Invalid request line, close the connection
         handleData.requestState.uri = handleData.recvBuffer[space1 + 1 ..< space2]
         if handleData.recvBuffer.find(
           ' ',
-          space2 + 1, lineStart + lineLen - 1
+          space2 + 1,
+          lineStart + lineLen - 1
         ) != -1:
           return true # Invalid request line, close the connection
         let httpVersionLen = lineLen - (space2 + 1 - lineStart)
@@ -831,35 +834,58 @@ proc afterRecvHttp(
         else:
           return true # Unsupported HTTP version, close the connection
       else: # This is a header
-        discard
+        let splitAt = handleData.recvBuffer.find(
+          ':',
+          lineStart,
+          lineStart + lineLen - 1
+        )
+        if splitAt == -1:
+          # Malformed header, include it for debugging purposes
+          var line = handleData.recvBuffer[lineStart ..< lineStart + lineLen]
+          handleData.requestState.headers.add((move line, ""))
+        else:
+          var
+            leftStart = lineStart
+            leftLen = splitAt - leftStart
+            rightStart = splitAt + 1
+            rightLen = lineStart + lineLen - rightStart
 
+          while leftLen > 0 and handleData.recvBuffer[leftStart] in Whitespace:
+            inc leftStart
+            dec leftLen
+          while leftLen > 0 and handleData.recvBuffer[leftStart + leftLen - 1] in Whitespace:
+            dec leftLen
+          while rightLen > 0 and handleData.recvBuffer[rightStart] in Whitespace:
+            inc rightStart
+            dec rightLen
+          while leftLen > 0 and handleData.recvBuffer[rightStart + rightLen - 1] in Whitespace:
+            dec rightLen
 
+          handleData.requestState.headers.add((
+            handleData.recvBuffer[leftStart ..< leftStart + leftLen],
+            handleData.recvBuffer[rightStart ..< rightStart + rightLen]
+          ))
 
       lineStart = lineEnd + 2
       inc lineNum
 
-
-
-
-
-
-
-    var
-      headerLines: seq[string]
-      nextLineStart: int
-    while true:
-      let lineEnd = handleData.recvBuffer.find(
-        "\r\n",
-        nextLineStart,
-        headersEnd
-      )
-      if lineEnd == -1:
-        var line = handleData.recvBuffer[nextLineStart ..< headersEnd].strip()
-        headerLines.add(move line)
-        break
-      else:
-        headerLines.add(handleData.recvBuffer[nextLineStart ..< lineEnd].strip())
-        nextLineStart = lineEnd + 2
+    # ^ Does this but with way more allocations
+    # var
+    #   headerLines: seq[string]
+    #   nextLineStart: int
+    # while true:
+    #   let lineEnd = handleData.recvBuffer.find(
+    #     "\r\n",
+    #     nextLineStart,
+    #     headersEnd
+    #   )
+    #   if lineEnd == -1:
+    #     var line = handleData.recvBuffer[nextLineStart ..< headersEnd].strip()
+    #     headerLines.add(move line)
+    #     break
+    #   else:
+    #     headerLines.add(handleData.recvBuffer[nextLineStart ..< lineEnd].strip())
+    #     nextLineStart = lineEnd + 2
 
     # let
     #   requestLine = headerLines[0]
@@ -877,23 +903,12 @@ proc afterRecvHttp(
     # else:
     #   return true # Unsupported HTTP version, close the connection
 
-    for i in 1 ..< headerLines.len:
-      let parts = headerLines[i].split(":")
-      if parts.len == 2:
-        handleData.requestState.headers.add((parts[0].strip(), parts[1].strip()))
-      else:
-        handleData.requestState.headers.add((headerLines[i], ""))
-
-
-
-
-
-
-
-
-
-
-
+    # for i in 1 ..< headerLines.len:
+    #   let parts = headerLines[i].split(":")
+    #   if parts.len == 2:
+    #     handleData.requestState.headers.add((parts[0].strip(), parts[1].strip()))
+    #   else:
+    #     handleData.requestState.headers.add((headerLines[i], ""))
 
     handleData.requestState.chunked =
       handleData.requestState.headers.headerContainsToken(
