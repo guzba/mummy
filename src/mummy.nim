@@ -47,6 +47,7 @@ type
     body*: string
     server: Server
     clientSocket: SocketHandle
+    id: uint64
 
   RequestHandler* = proc(request: Request) {.gcsafe.}
 
@@ -79,19 +80,28 @@ type
     workerThreads: seq[Thread[Server]]
     socket: SocketHandle
     selector: Selector[HandleData]
-    responseQueued, sendQueued, shutdown: SelectEvent
+    shutdown: SelectEvent
     clientSockets: HashSet[SocketHandle]
+    destroyCalled: Atomic[bool]
+    nextRequestId: uint64
     when useLockAndCond:
       taskQueueLock: Lock
       taskQueueCond: Cond
+      taskQueue: Deque[WorkerTask]
+      responseQueued: SelectEvent
+      responseQueue: Deque[EncodedResponse]
+      responseQueueLock: Atomic[bool]
     else:
+      taskNum: int
+      lockShards: int
       epollFd, destroyCalledFd: cint
-      taskQueuedFd: cint
-      taskQueueLock: Atomic[bool]
-    destroyCalled: Atomic[bool]
-    taskQueue: Deque[WorkerTask]
-    responseQueue: Deque[EncodedResponse]
-    responseQueueLock: Atomic[bool]
+      taskQueuedFds: seq[cint]
+      taskQueueLocks: seq[Atomic[bool]]
+      taskQueues: seq[Deque[WorkerTask]]
+      responseQueued: seq[SelectEvent]
+      responseQueues: seq[Deque[EncodedResponse]]
+      responseQueueLocks: seq[Atomic[bool]]
+    sendQueued: SelectEvent
     sendQueue: Deque[EncodedFrame]
     sendQueueLock: Atomic[bool]
     websocketClaimed: Table[WebSocket, bool]
@@ -154,7 +164,7 @@ proc `$`*(request: Request): string =
     result &= "HTTP/1.0"
   else:
     result &= "HTTP/1.0"
-  result &= " (" & $cast[uint](request) & ")"
+  result &= " (" & $request.id & ")"
 
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $cast[uint](hash(websocket))
@@ -168,25 +178,53 @@ proc hash*(websocket: WebSocket): Hash =
 # proc pause() {.importc: "__builtin_ia32_pause", cdecl.}
 
 template withLock(lock: var Atomic[bool], body: untyped): untyped =
-    ## TTAS
-    while true:
-      if not lock.exchange(true, moAcquire): # If we got the lock
-        break
-      while lock.load(moRelaxed): # While still locked
-        discard # pause()
+    # TAS
+    while lock.exchange(true, moAcquire): # Until we get the lock
+      discard
     try:
       body
     finally:
       store(lock, false, moRelease)
+    # # TTAS
+    # while true:
+    #   if not lock.exchange(true, moAcquire): # If we got the lock
+    #     break
+    #   while lock.load(moRelaxed): # While still locked
+    #     discard # pause()
+    # try:
+    #   body
+    # finally:
+    #   store(lock, false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
       if ',' in v:
-        var parts = v.split(",")
-        for part in parts.mitems:
-          if cmpIgnoreCase(part.strip(), token) == 0:
-            return true
+        var first = 0
+        while first < v.len:
+          var comma = v.find(',', start = first)
+          if comma == -1:
+            comma = v.len
+          var len = comma - first
+          while len > 0 and v[first] in Whitespace:
+            inc first
+            dec len
+          while len > 0 and v[first + len - 1] in Whitespace:
+            dec len
+          if len > 0 and len == token.len:
+            var matches = true
+            for i in 0 ..< len:
+              if ord(toLowerAscii(v[first + i])) != ord(toLowerAscii(token[i])):
+                matches = false
+                break
+            if matches:
+              return true
+          first = comma + 1
+        # ^ Does this without allocations
+        # var parts = v.split(",")
+        # for part in parts.mitems:
+        #   if cmpIgnoreCase(part.strip(), token) == 0:
+        #     return true
       else:
         if cmpIgnoreCase(v, token) == 0:
           return true
@@ -278,10 +316,11 @@ proc workerProc(server: Server) =
     while true:
       acquire(server.taskQueueLock)
 
-      while server.taskQueue.len == 0 and not server.destroyCalled:
+      while server.taskQueue.len == 0 and
+        not server.destroyCalled.load(moRelaxed):
         wait(server.taskQueueCond, server.taskQueueLock)
 
-      if server.destroyCalled:
+      if server.destroyCalled.load(moRelaxed):
         release(server.taskQueueLock)
         return
 
@@ -289,15 +328,16 @@ proc workerProc(server: Server) =
       release(server.taskQueueLock)
       runTask(task)
   else:
+    var shard: int # The shard this worker is currently on
     while true:
       var
         task: WorkerTask
         poppedTask: bool
       if server.destroyCalled.load(moRelaxed):
         break
-      withLock server.taskQueueLock:
-        if server.taskQueue.len > 0:
-          task = server.taskQueue.popFirst()
+      withLock server.taskQueueLocks[shard]:
+        if server.taskQueues[shard].len > 0:
+          task = server.taskQueues[shard].popFirst()
           poppedTask = true
       if poppedTask:
         runTask(task)
@@ -306,8 +346,19 @@ proc workerProc(server: Server) =
         var event: EpollEvent
         let n = epoll_wait(server.epollFd, event.addr, 1, -1);
         if n > 0:
+          let fd = cast[cint](event.data.u64)
+          if fd == server.destroyCalledFd:
+            break
+          var found: bool
+          for i in 0 ..< server.lockShards:
+            if server.taskQueuedFds[i] == fd:
+              shard = i
+              found = true
+              break
+          if not found:
+            assert false # Notice this when not a release build
           var data: uint64 = 0
-          let ret = posix.read(server.taskQueuedFd, data.addr, sizeof(uint64))
+          let ret = posix.read(fd, data.addr, sizeof(uint64))
           if ret != sizeof(uint64):
             let err = osLastError()
             if err == OSErrorCode(EAGAIN):
@@ -418,10 +469,15 @@ proc respond*(
     "websocket"
   )
 
-  withLock request.server.responseQueueLock:
-    request.server.responseQueue.addLast(move encodedResponse)
-
-  request.server.responseQueued.trigger2()
+  when useLockAndCond:
+    withLock request.server.responseQueueLock:
+      request.server.responseQueue.addLast(move encodedResponse)
+    request.server.responseQueued.trigger2()
+  else:
+    let shard = request.id mod cast[uint64](request.server.lockShards)
+    withLock request.server.responseQueueLocks[shard]:
+      request.server.responseQueues[shard].addLast(move encodedResponse)
+    request.server.responseQueued[shard].trigger2()
 
 proc upgradeToWebSocket*(
   request: Request
@@ -468,12 +524,21 @@ proc upgradeToWebSocket*(
   request.respond(101, headers, "")
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
-  withLock server.taskQueueLock:
-    server.taskQueue.addLast(task)
   when useLockAndCond:
-    signal(server.taskQueueCond)
+    withLock server.taskQueueLock:
+      server.taskQueue.addLast(task)
+      signal(server.taskQueueCond)
   else:
-    server.taskQueuedFd.trigger()
+    let shard = server.taskNum mod server.lockShards
+    withLock server.taskQueueLocks[shard]:
+      server.taskQueues[shard].addLast(task)
+    server.taskQueuedFds[shard].trigger()
+    inc server.taskNum
+
+  # try:
+  #   server.handler(task.request)
+  # except:
+  #   echo getCurrentExceptionMsg()
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
@@ -674,6 +739,7 @@ proc popRequest(
   result = Request()
   result.server = server
   result.clientSocket = clientSocket
+  result.id = server.nextRequestId
   result.httpVersion = handleData.requestState.httpVersion
   result.httpMethod = move handleData.requestState.httpMethod
   result.uri = move handleData.requestState.uri
@@ -681,6 +747,7 @@ proc popRequest(
   result.body = move handleData.requestState.body
   result.body.setLen(handleData.requestState.contentLength)
   handleData.requestState = IncomingRequestState()
+  inc server.nextRequestId
 
 proc afterRecvHttp(
   server: Server,
@@ -699,6 +766,18 @@ proc afterRecvHttp(
       if handleData.bytesReceived > server.maxHeadersLen:
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
+
+
+
+
+
+
+
+
+
+
+
+
 
     # We have the headers, now to parse them
     var
@@ -735,11 +814,22 @@ proc afterRecvHttp(
       return true # Unsupported HTTP version, close the connection
 
     for i in 1 ..< headerLines.len:
-      let parts = headerLines[i].split(": ")
+      let parts = headerLines[i].split(":")
       if parts.len == 2:
-        handleData.requestState.headers.add((parts[0], parts[1]))
+        handleData.requestState.headers.add((parts[0].strip(), parts[1].strip()))
       else:
-        handleData.requestState.headers.add((headerLines[i], ""))
+        handleData.requestState.headers.add((headerLines[i].strip(), ""))
+
+
+
+
+
+
+
+
+
+
+
 
     handleData.requestState.chunked =
       handleData.requestState.headers.headerContainsToken(
@@ -764,10 +854,14 @@ proc afterRecvHttp(
         return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
+    # We do this so we can hopefully just move the receive buffer at the end
+    # instead of always copying a potentially huge body
     let bodyStart = headersEnd + 4
     if handleData.bytesReceived == bodyStart:
       handleData.bytesReceived = 0
     else:
+      # This could be optimized away by having [0] be [head] where head can move
+      # without having to copy the headers out
       copyMem(
         handleData.recvBuffer[0].addr,
         handleData.recvBuffer[bodyStart].addr,
@@ -859,24 +953,30 @@ proc afterRecvHttp(
 
     # We have the entire request body
 
-    # If this request has a body, fill it
+    # If this request has a body
     if handleData.requestState.contentLength > 0:
-      handleData.requestState.body.setLen(handleData.requestState.contentLength)
-      copyMem(
-        handleData.requestState.body[0].addr,
-        handleData.recvBuffer[0].addr,
-        handleData.requestState.contentLength
-      )
-
-    # Remove this request from the receive buffer
-    let bytesRemaining =
-      handleData.bytesReceived - handleData.requestState.contentLength
-    copyMem(
-      handleData.recvBuffer[0].addr,
-      handleData.recvBuffer[handleData.requestState.contentLength].addr,
-      bytesRemaining
-    )
-    handleData.bytesReceived = bytesRemaining
+      # If the receive buffer only has the body in it, just move it and reset
+      # the receive buffer
+      if handleData.requestState.contentLength == handleData.bytesReceived:
+        handleData.requestState.body = move handleData.recvBuffer
+        handleData.recvBuffer.setLen(initialRecvBufferLen)
+      else:
+        # Copy the body out of the buffer
+        handleData.requestState.body.setLen(handleData.requestState.contentLength)
+        copyMem(
+          handleData.requestState.body[0].addr,
+          handleData.recvBuffer[0].addr,
+          handleData.requestState.contentLength
+        )
+        # Remove this request from the receive buffer
+        let bytesRemaining =
+          handleData.bytesReceived - handleData.requestState.contentLength
+        copyMem(
+          handleData.recvBuffer[0].addr,
+          handleData.recvBuffer[handleData.requestState.contentLength].addr,
+          bytesRemaining
+        )
+        handleData.bytesReceived = bytesRemaining
 
     let request = server.popRequest(clientSocket, handleData)
     server.postTask(WorkerTask(request: request))
@@ -954,12 +1054,20 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       deinitLock(server.taskQueueLock)
       deinitCond(server.taskQueueCond)
     else:
-      discard server.taskQueuedFd.close()
+      for i in 0 ..< server.lockShards:
+        discard server.taskQueuedFds[i].close()
       discard server.epollFd.close()
-    try:
-      server.responseQueued.close()
-    except:
-      discard # Ignore
+    when useLockAndCond:
+      try:
+        server.responseQueued.close()
+      except:
+        discard # Ignore
+    else:
+      for i in 0 ..< server.lockShards:
+        try:
+          server.responseQueued[i].close()
+        except:
+          discard # Ignore
     try:
       server.sendQueued.close()
     except:
@@ -994,9 +1102,19 @@ proc loopForever(
       let readyKey = readyKeys[i]
       if User in readyKey.events:
         let eventHandleData = server.selector.getData(readyKey.fd)
-        if eventHandleData.forEvent == server.responseQueued:
-          responseQueuedTriggered = true
-        elif eventHandleData.forEvent == server.sendQueued:
+        when useLockAndCond:
+          if eventHandleData.forEvent == server.responseQueued:
+            responseQueuedTriggered = true
+            continue
+        else:
+          for i in 0 ..< server.lockShards:
+            if eventHandleData.forEvent == server.responseQueued[i]:
+              responseQueuedTriggered = true
+              withLock server.responseQueueLocks[i]:
+                while server.responseQueues[i].len > 0:
+                  encodedResponses.add(server.responseQueues[i].popFirst())
+
+        if eventHandleData.forEvent == server.sendQueued:
           sendQueuedTriggered = true
         elif eventHandleData.forEvent == server.shutdown:
           shutdownTriggered = true
@@ -1004,9 +1122,12 @@ proc loopForever(
           discard
 
     if responseQueuedTriggered:
-      withLock server.responseQueueLock:
-        while server.responseQueue.len > 0:
-          encodedResponses.add(server.responseQueue.popFirst())
+      when useLockAndCond:
+        withLock server.responseQueueLock:
+          while server.responseQueue.len > 0:
+            encodedResponses.add(server.responseQueue.popFirst())
+      else:
+        discard
 
       for encodedResponse in encodedResponses:
         if encodedResponse.clientSocket in server.selector:
@@ -1237,9 +1358,15 @@ proc serve*(
 
     server.selector.registerHandle2(server.socket, {Read}, nil)
 
-    let responseQueuedData = HandleData()
-    responseQueuedData.forEvent = server.responseQueued
-    server.selector.registerEvent(server.responseQueued, responseQueuedData)
+    when useLockAndCond:
+      let responseQueuedData = HandleData()
+      responseQueuedData.forEvent = server.responseQueued
+      server.selector.registerEvent(server.responseQueued, responseQueuedData)
+    else:
+      for i in 0 ..< server.lockShards:
+        let responseQueuedData = HandleData()
+        responseQueuedData.forEvent = server.responseQueued[i]
+        server.selector.registerEvent(server.responseQueued[i], responseQueuedData)
 
     let sendQueuedData = HandleData()
     sendQueuedData.forEvent = server.sendQueued
@@ -1279,36 +1406,26 @@ proc newServer*(
 
   # Stuff that can fail
   try:
-    result.responseQueued = newSelectEvent()
     result.sendQueued = newSelectEvent()
     result.shutdown = newSelectEvent()
 
     when useLockAndCond:
+      result.responseQueued = newSelectEvent()
       initLock(result.taskQueueLock)
       initCond(result.taskQueueCond)
     else:
+      result.lockShards = max(countProcessors() - 1, 1)
+
       result.epollFd = epoll_create1(O_CLOEXEC)
       if result.epollFd < 0:
         raiseOSError(osLastError())
-      result.taskQueuedFd = eventfd(0, O_CLOEXEC or O_NONBLOCK)
-      if result.taskQueuedFd == -1:
-        raiseOSError(osLastError())
+
       result.destroyCalledFd = eventfd(0, O_CLOEXEC or O_NONBLOCK)
       if result.destroyCalledFd == -1:
         raiseOSError(osLastError())
-      var taskQueuedEvent: EpollEvent
-      taskQueuedEvent.events = EPOLLIN or EPOLLET
-      taskQueuedEvent.data.u64 = result.taskQueuedFd.uint
-      if epoll_ctl(
-        result.epollFd,
-        EPOLL_CTL_ADD,
-        result.taskQueuedFd,
-        taskQueuedEvent.addr
-      ) != 0:
-        raiseOSError(osLastError())
       var destroyCalledEvent: EpollEvent
       destroyCalledEvent.events = EPOLLIN
-      destroyCalledEvent.data.u64 = result.destroyCalledFd.uint
+      destroyCalledEvent.data.u64 = cast[uint64](result.destroyCalledFd)
       if epoll_ctl(
         result.epollFd,
         EPOLL_CTL_ADD,
@@ -1316,6 +1433,30 @@ proc newServer*(
         destroyCalledEvent.addr
       ) != 0:
         raiseOSError(osLastError())
+
+      result.taskQueueLocks.setLen(result.lockShards)
+      result.taskQueuedFds.setLen(result.lockShards)
+      result.taskQueues.setLen(result.lockShards)
+      result.responseQueued.setLen(result.lockShards)
+      result.responseQueues.setLen(result.lockShards)
+      result.responseQueueLocks.setLen(result.lockShards)
+
+      for i in 0 ..< result.lockShards:
+        result.taskQueuedFds[i] = eventfd(0, O_CLOEXEC or O_NONBLOCK)
+        if result.taskQueuedFds[i] == -1:
+          raiseOSError(osLastError())
+        var taskQueuedEvent: EpollEvent
+        taskQueuedEvent.events = EPOLLIN or EPOLLET
+        taskQueuedEvent.data.u64 = cast[uint64](result.taskQueuedFds[i])
+        if epoll_ctl(
+          result.epollFd,
+          EPOLL_CTL_ADD,
+          result.taskQueuedFds[i],
+          taskQueuedEvent.addr
+        ) != 0:
+          raiseOSError(osLastError())
+
+        result.responseQueued[i] = newSelectEvent()
 
     for workerThead in result.workerThreads.mitems:
       createThread(workerThead, workerProc, result)

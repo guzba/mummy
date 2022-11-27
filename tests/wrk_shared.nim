@@ -1,3 +1,3 @@
 var responseBody*: string
-for i in 0 ..< 10000:
+for i in 0 ..< 1:
   responseBody &= "abcdefghijklmnopqrstuvwxyz"
