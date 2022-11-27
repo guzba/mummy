@@ -4,9 +4,8 @@ proc handler(request: Request) =
   case request.uri:
   of "/":
     if request.httpMethod == "GET":
-      var headers: HttpHeaders
       {.gcsafe.}:
-        request.respond(200, headers, responseBody)
+        request.respond(200, body = responseBody)
     else:
       request.respond(405)
   else:
