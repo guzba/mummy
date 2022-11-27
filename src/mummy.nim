@@ -96,7 +96,7 @@ type
       responseQueue: Deque[EncodedResponse]
       responseQueueLock: Atomic[bool]
     else:
-      taskNum: int
+      taskNum: uint64
       lockShards: int
       epollFd, destroyCalledFd: cint
       taskQueuedFds: seq[cint]
@@ -534,7 +534,7 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
       server.taskQueue.addLast(task)
       signal(server.taskQueueCond)
   else:
-    let shard = server.taskNum mod server.lockShards
+    let shard = server.taskNum mod cast[uint64](server.lockShards)
     withLock server.taskQueueLocks[shard]:
       server.taskQueues[shard].addLast(task)
     server.taskQueuedFds[shard].trigger()
