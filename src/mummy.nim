@@ -997,13 +997,13 @@ proc afterRecvHttp(
         let newLen = max(handleData.requestState.body.len * 2, newContentLength)
         handleData.requestState.body.setLen(newLen)
 
-      copyMem(
-        handleData.requestState.body[handleData.requestState.contentLength].addr,
-        handleData.recvBuffer[chunkStart].addr,
-        chunkLen
-      )
-
-      handleData.requestState.contentLength += chunkLen
+      if chunkLen > 0:
+        copyMem(
+          handleData.requestState.body[handleData.requestState.contentLength].addr,
+          handleData.recvBuffer[chunkStart].addr,
+          chunkLen
+        )
+        handleData.requestState.contentLength += chunkLen
 
       # Remove this chunk from the receive buffer
       let
