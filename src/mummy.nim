@@ -1163,12 +1163,14 @@ proc loopForever(
             responseQueuedTriggered = true
             continue
         else:
-          for i in 0 ..< server.lockShards:
-            if eventHandleData.forEvent == server.responseQueued[i]:
-              responseQueuedTriggered = true
-              withLock server.responseQueueLocks[i]:
-                while server.responseQueues[i].len > 0:
-                  encodedResponses.add(server.responseQueues[i].popFirst())
+          if eventHandleData.forEvent != nil:
+            for i in 0 ..< server.lockShards:
+              if eventHandleData.forEvent == server.responseQueued[i]:
+                responseQueuedTriggered = true
+                withLock server.responseQueueLocks[i]:
+                  while server.responseQueues[i].len > 0:
+                    encodedResponses.add(server.responseQueues[i].popFirst())
+                break
 
         if eventHandleData.forEvent == server.sendQueued:
           sendQueuedTriggered = true
