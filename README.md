@@ -133,16 +133,12 @@ I believe Mummy clears all three priorities:
 
 1) Mummy prioritizes efficiency in receiving and dispatching incoming requests and sending outgoing responses. This means things like avoiding unnecessary memory copying, ensuring the CPU spends all of its time in your handlers.
 
-2) Because Mummy uses mulitplexed IO just like async, Mummy is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. Additionally, while a single blocking or CPU heavy operation can stall an entire ansync server, this is not a problem for Mummy.
+2) Because Mummy uses mulitplexed IO just like async, Mummy is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. Additionally, while a single blocking or CPU heavy operation can stall an entire async server, this is not a problem for Mummy.
 
-3) Handlers with Mummy are just plain-old inline Nim code. They have a straightforward request-in-response-out API. Keeping things simple is great for maintenance, reliability and performance.
+3) Request handlers with Mummy are just plain-old inline Nim code. They have a straightforward request-in-response-out API. Keeping things simple is great for maintenance, reliability and performance.
 
 ## Benchmarks
 
-`nim c -d:release -r tests/ab_mummyserver.nim`
+## Testing
 
-`nim c -d:release -r tests/ab_asynchttpserver.nim`
-
-`ab -n 10000 -c 100 -k http://localhost:8080/`
-
-`ab -n 10000 -c 100 http://localhost:8080/`
+A fuzzer has been run against Mummy's socket reading and parsing code to ensure Mummy does not crash or otherwise misbehave on bad data from sockets. You can run the fuzzer any time by running `nim c -r tests/fuzz_recv.nim`.
