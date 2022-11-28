@@ -240,7 +240,7 @@ proc send*(
   data: sink string,
   kind = TextMessage,
 ) {.raises: [], gcsafe.} =
-  let encodedFrame = OutgoingBuffer()
+  var encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
 
   case kind:
@@ -256,19 +256,19 @@ proc send*(
   encodedFrame.buffer2 = move data
 
   acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(encodedFrame)
+  websocket.server.sendQueue.addLast(move encodedFrame)
   release(websocket.server.sendQueueLock)
 
   websocket.server.sendQueued.trigger2()
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
-  let encodedFrame = OutgoingBuffer()
+  var encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
   acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(encodedFrame)
+  websocket.server.sendQueue.addLast(move encodedFrame)
   release(websocket.server.sendQueueLock)
 
   websocket.server.sendQueued.trigger2()
@@ -396,7 +396,7 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
-  update: WebSocketUpdate
+  update: var WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
     # TODO: log?
@@ -407,12 +407,12 @@ proc postWebSocketUpdate(
   acquire(websocket.server.websocketQueuesLock)
   if websocket in websocket.server.websocketQueues:
     try:
-      websocket.server.websocketQueues[websocket].addLast(update)
+      websocket.server.websocketQueues[websocket].addLast(move update)
     except KeyError:
       assert false # Notice this when not a release build
   else:
     var queue: Deque[WebSocketUpdate]
-    queue.addLast(update)
+    queue.addLast(move update)
     websocket.server.websocketQueues[websocket] = move queue
     needsWorkQueueEntry = true
   release(websocket.server.websocketQueuesLock)
@@ -578,16 +578,14 @@ proc afterRecvWebSocket(
         # TODO: log?
         return true # Invalid opcode, close the connection
 
-      let
-        websocket = WebSocket(
-          server: server,
-          clientSocket: clientSocket
-        )
-        update = WebSocketUpdate(
-          event: MessageEvent,
-          message: move message
-        )
-
+      let websocket = WebSocket(
+        server: server,
+        clientSocket: clientSocket
+      )
+      var update = WebSocketUpdate(
+        event: MessageEvent,
+        message: move message
+      )
       websocket.postWebSocketUpdate(update)
 
 proc popRequest(
@@ -829,12 +827,11 @@ proc afterSend(
   if outgoingBuffer.bytesSent == totalBytes:
     handleData.outgoingBuffers.shrink(1)
     if outgoingBuffer.isWebSocketUpgrade:
-      let
-        websocket = WebSocket(
-          server: server,
-          clientSocket: clientSocket
-        )
-        update = WebSocketUpdate(event: OpenEvent)
+      let websocket = WebSocket(
+        server: server,
+        clientSocket: clientSocket
+      )
+      var update = WebSocketUpdate(event: OpenEvent)
       websocket.postWebSocketUpdate(update)
 
     if outgoingBuffer.isCloseFrame:
@@ -1072,9 +1069,9 @@ proc loopForever(
       if handleData.upgradedToWebSocket:
         let websocket = WebSocket(server: server, clientSocket: clientSocket)
         if not handleData.closeFrameSent:
-          let error = WebSocketUpdate(event: ErrorEvent)
+          var error = WebSocketUpdate(event: ErrorEvent)
           websocket.postWebSocketUpdate(error)
-        let close = WebSocketUpdate(event: CloseEvent)
+        var close = WebSocketUpdate(event: CloseEvent)
         websocket.postWebSocketUpdate(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
