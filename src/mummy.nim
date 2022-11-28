@@ -17,7 +17,7 @@ const
   initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 type
-  RequestObj = object
+  Request* {.acyclic.} = ref object
     httpVersion*: HttpVersion
     httpMethod*: string
     uri*: string
@@ -25,8 +25,6 @@ type
     body*: string
     server: Server
     clientSocket: SocketHandle
-
-  Request* = ptr RequestObj
 
   RequestHandler* = proc(request: Request) {.gcsafe.}
 
@@ -220,8 +218,6 @@ proc workerProc(server: Server) =
       except:
         # TODO: log?
         echo getCurrentExceptionMsg()
-      `=destroy`(task.request[])
-      deallocShared(task.request)
     else: # WebSocket
       while true: # Process the entire websocket queue
         var update: WebSocketUpdate
@@ -609,7 +605,7 @@ proc popRequest(
   handleData: HandleData
 ): Request {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
-  result = cast[Request](allocShared0(sizeof(RequestObj)))
+  result = Request()
   result.server = server
   result.clientSocket = clientSocket
   result.httpVersion = handleData.requestState.httpVersion
