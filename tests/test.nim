@@ -1,60 +1,26 @@
-import httpclient, mummy, std/os, zippy
+import mummy {.all.}
 
-proc handler(request: Request) =
-  case request.uri:
-  of "/":
-    if request.httpMethod == "GET":
-      var headers: mummy.HttpHeaders
-      headers["Content-Type"] = "text/plain"
-      request.respond(200, headers, "Hello, World!")
-    else:
-      request.respond(405)
-  of "/compressed":
-    if request.httpMethod == "GET":
-      var headers: mummy.HttpHeaders
-      headers["Content-Type"] = "text/plain"
-      var body: string
-      for i in 0 ..< 10:
-        body &= "abcdefghijklmnopqrstuvwxyz"
-      request.respond(200, headers, body)
-    else:
-      request.respond(405)
-  else:
-    request.respond(404)
+block:
+  var headers: HttpHeaders
+  headers["0"] = "a"
+  headers["1"] = "a,b"
+  headers["2"] = "a, bbbb,cc  ,     dd   ,,"
 
-let server = newServer(handler)
+  doAssert headers.headerContainsToken("0", "a")
+  doAssert headers.headerContainsToken("0", "A")
+  doAssert not headers.headerContainsToken("0", "b")
 
-var requesterThread: Thread[void]
+  doAssert headers.headerContainsToken("1", "a")
+  doAssert headers.headerContainsToken("1", "A")
+  doAssert headers.headerContainsToken("1", "b")
+  doAssert headers.headerContainsToken("1", "B")
+  doAssert not headers.headerContainsToken("1", "c")
+  doAssert not headers.headerContainsToken("1", "C")
 
-proc requesterProc() =
-  sleep(1000) # Give the server some time to start up
-
-  block:
-    let client = newHttpClient()
-    doAssert client.getContent("http://localhost:8081/") == "Hello, World!"
-
-  block:
-    let client = newHttpClient()
-    doAssert client.post("http://localhost:8081/", "").status == "405"
-
-  block:
-    let client = newHttpClient()
-    client.headers = newHttpHeaders({"Accept-Encoding": "gzip"})
-    let response = client.request("http://localhost:8081/compressed")
-    doAssert response.headers["Content-Encoding"] == "gzip"
-    discard uncompress(response.body, dfGzip)
-
-  block:
-    let client = newHttpClient()
-    client.headers = newHttpHeaders({"Accept-Encoding": "deflate"})
-    let response = client.request("http://localhost:8081/compressed")
-    doAssert response.headers["Content-Encoding"] == "deflate"
-    discard uncompress(response.body, dfDeflate)
-
-  echo "Done, shut down the server"
-  server.close()
-
-createThread(requesterThread, requesterProc)
-
-# Start the server
-server.serve(Port(8081))
+  doAssert headers.headerContainsToken("2", "a")
+  doAssert headers.headerContainsToken("2", "bbbb")
+  doAssert headers.headerContainsToken("2", "BbBB")
+  doAssert headers.headerContainsToken("2", "cc")
+  doAssert headers.headerContainsToken("2", "dd")
+  doAssert headers.headerContainsToken("2", "DD")
+  doAssert not headers.headerContainsToken("2", "d")
