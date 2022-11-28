@@ -142,14 +142,31 @@ proc hash*(websocket: WebSocket): Hash =
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
-      if ',' in v:
-        var parts = v.split(",")
-        for part in parts.mitems:
-          if cmpIgnoreCase(part.strip(), token) == 0:
+      var first = 0
+      while first < v.len:
+        var comma = v.find(',', start = first)
+        if comma == -1:
+          comma = v.len
+        var len = comma - first
+        while len > 0 and v[first] in Whitespace:
+          inc first
+          dec len
+        while len > 0 and v[first + len - 1] in Whitespace:
+          dec len
+        if len > 0 and len == token.len:
+          var matches = true
+          for i in 0 ..< len:
+            if ord(toLowerAscii(v[first + i])) != ord(toLowerAscii(token[i])):
+              matches = false
+              break
+          if matches:
             return true
-      else:
-        if cmpIgnoreCase(v, token) == 0:
-          return true
+        first = comma + 1
+      # Above does the same thing but without the allocations
+      # var parts = v.split(",")
+      # for part in parts.mitems:
+      #   if cmpIgnoreCase(part.strip(), token) == 0:
+      #     return true
 
 proc registerHandle2(
   selector: Selector[HandleData],
