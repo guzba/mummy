@@ -1018,7 +1018,7 @@ proc loopForever(
 
           let bytesReceived = readyKey.fd.SocketHandle.recv(
             handleData.recvBuffer[handleData.bytesReceived].addr,
-            handleData.recvBuffer.len - handleData.bytesReceived,
+            (handleData.recvBuffer.len - handleData.bytesReceived).cint,
             0
           )
           if bytesReceived > 0:
@@ -1035,7 +1035,7 @@ proc loopForever(
               if outgoingBuffer.bytesSent < outgoingBuffer.buffer1.len:
                 readyKey.fd.SocketHandle.send(
                   outgoingBuffer.buffer1[outgoingBuffer.bytesSent].addr,
-                  outgoingBuffer.buffer1.len - outgoingBuffer.bytesSent,
+                  (outgoingBuffer.buffer1.len - outgoingBuffer.bytesSent).cint,
                   0
                 )
               else:
@@ -1043,7 +1043,7 @@ proc loopForever(
                   outgoingBuffer.bytesSent - outgoingBuffer.buffer1.len
                 readyKey.fd.SocketHandle.send(
                   outgoingBuffer.buffer2[buffer2Pos].addr,
-                  outgoingBuffer.buffer2.len - buffer2Pos,
+                  (outgoingBuffer.buffer2.len - buffer2Pos).cint,
                   0
                 )
           if bytesSent > 0:
