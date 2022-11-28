@@ -1172,8 +1172,8 @@ proc loopForever(
         server.selector.unregister(clientSocket)
       except:
         # Leaks HandleData for this socket
-        # Raise as a serve() exception?
-        raise cast[ref IOSelectorsException](getCurrentException())
+        # TODO: log?
+        discard
       finally:
         clientSocket.close()
         server.clientSockets.excl(clientSocket)
