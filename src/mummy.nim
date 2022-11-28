@@ -220,6 +220,7 @@ proc workerProc(server: Server) =
       except:
         # TODO: log?
         echo getCurrentExceptionMsg()
+      `=destroy`(task.request[])
       deallocShared(task.request)
     else: # WebSocket
       while true: # Process the entire websocket queue
