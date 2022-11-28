@@ -400,13 +400,13 @@ proc upgradeToWebSocket*(
 
   request.respond(101, headers, "")
 
-proc dispatchTask(server: Server, task: WorkerTask) {.raises: [].} =
+proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   acquire(server.taskQueueLock)
   server.taskQueue.addLast(task)
   release(server.taskQueueLock)
   signal(server.taskQueueCond)
 
-proc dispatchWebSocketUpdate(
+proc postWebSocketUpdate(
   websocket: WebSocket,
   update: WebSocketUpdate
 ) {.raises: [].} =
@@ -430,7 +430,7 @@ proc dispatchWebSocketUpdate(
   release(websocket.server.websocketQueuesLock)
 
   if needsWorkQueueEntry:
-    websocket.server.dispatchTask(WorkerTask(websocket: websocket))
+    websocket.server.postTask(WorkerTask(websocket: websocket))
 
 proc sendCloseFrame(
   server: Server,
@@ -600,7 +600,7 @@ proc afterRecvWebSocket(
           message: move message
         )
 
-      websocket.dispatchWebSocketUpdate(update)
+      websocket.postWebSocketUpdate(update)
 
 proc popRequest(
   server: Server,
@@ -784,8 +784,8 @@ proc afterRecvHttp(
       handleData.bytesReceived = bytesRemaining
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
-        let request = server.popRequest(clientSocket, handleData)
-        server.dispatchTask(WorkerTask(request: request))
+        var request = server.popRequest(clientSocket, handleData)
+        server.postTask(WorkerTask(request: move request))
         return false
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
@@ -815,8 +815,8 @@ proc afterRecvHttp(
     )
     handleData.bytesReceived = bytesRemaining
 
-    let request = server.popRequest(clientSocket, handleData)
-    server.dispatchTask(WorkerTask(request: request))
+    var request = server.popRequest(clientSocket, handleData)
+    server.postTask(WorkerTask(request: move request))
 
 proc afterRecv(
   server: Server,
@@ -847,7 +847,7 @@ proc afterSend(
           clientSocket: clientSocket
         )
         update = WebSocketUpdate(event: OpenEvent)
-      websocket.dispatchWebSocketUpdate(update)
+      websocket.postWebSocketUpdate(update)
 
     if outgoingBuffer.isCloseFrame:
       handleData.closeFrameSent = true
@@ -1103,9 +1103,9 @@ proc loopForever(
         let websocket = WebSocket(server: server, clientSocket: clientSocket)
         if not handleData.closeFrameSent:
           let error = WebSocketUpdate(event: ErrorEvent)
-          websocket.dispatchWebSocketUpdate(error)
+          websocket.postWebSocketUpdate(error)
         let close = WebSocketUpdate(event: CloseEvent)
-        websocket.dispatchWebSocketUpdate(close)
+        websocket.postWebSocketUpdate(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
   server.shutdown.trigger2()
