@@ -120,7 +120,7 @@ proc `$`*(request: Request): string =
   result &= " (" & $cast[uint](request) & ")"
 
 proc `$`*(websocket: WebSocket): string =
-  "WebSocket " & $hash(websocket)
+  "WebSocket " & $cast[uint](hash(websocket))
 
 proc hash*(websocket: WebSocket): Hash =
   var h: Hash
