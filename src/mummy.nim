@@ -16,6 +16,10 @@ const
   maxEventsPerSelectLoop = 64
   initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
+let
+  http10 = "HTTP/1.0"
+  http11 = "HTTP/1.1"
+
 type
   RequestObj = object
     httpVersion*: HttpVersion
@@ -628,45 +632,142 @@ proc afterRecvHttp(
       return false # Try again after receiving more bytes
 
     # We have the headers, now to parse them
-    var
-      headerLines: seq[string]
-      nextLineStart: int
-    while true:
-      let lineEnd = handleData.recvBuffer.find(
+
+    var lineNum, lineStart: int
+    while lineStart < headersEnd:
+      var lineEnd = handleData.recvBuffer.find(
         "\r\n",
-        nextLineStart,
+        lineStart,
         headersEnd
       )
       if lineEnd == -1:
-        var line = handleData.recvBuffer[nextLineStart ..< headersEnd].strip()
-        headerLines.add(move line)
-        break
-      else:
-        headerLines.add(handleData.recvBuffer[nextLineStart ..< lineEnd].strip())
-        nextLineStart = lineEnd + 2
+        lineEnd = headersEnd
 
-    let
-      requestLine = headerLines[0]
-      requestLineParts = requestLine.split(" ")
-    if requestLineParts.len != 3:
-      return true # Malformed request line, close the connection
+      var lineLen = lineEnd - lineStart
+      while lineLen > 0 and handleData.recvBuffer[lineStart] in Whitespace:
+        inc lineStart
+        dec lineLen
+      while lineLen > 0 and
+        handleData.recvBuffer[lineStart + lineLen - 1] in Whitespace:
+        dec lineLen
 
-    handleData.requestState.httpMethod = requestLineParts[0]
-    handleData.requestState.uri = requestLineParts[1]
+      if lineNum == 0: # This is the request line
+        let space1 = handleData.recvBuffer.find(
+          ' ',
+          lineStart,
+          lineStart + lineLen - 1
+        )
+        if space1 == -1:
+          return true # Invalid request line, close the connection
+        handleData.requestState.httpMethod = handleData.recvBuffer[lineStart ..< space1]
+        var remainingLen = lineLen - (space1 + 1 - lineStart)
+        let space2 = handleData.recvBuffer.find(
+          ' ',
+          space1 + 1,
+          space1 + 1 + remainingLen - 1
+        )
+        if space2 == -1:
+          return true # Invalid request line, close the connection
+        handleData.requestState.uri = handleData.recvBuffer[space1 + 1 ..< space2]
+        if handleData.recvBuffer.find(
+          ' ',
+          space2 + 1,
+          lineStart + lineLen - 1
+        ) != -1:
+          return true # Invalid request line, close the connection
+        let httpVersionLen = lineLen - (space2 + 1 - lineStart)
+        if httpVersionLen != 8:
+          return true # Invalid request line, close the connection
+        if equalMem(
+          handleData.recvBuffer[space2 + 1].addr,
+          http11[0].unsafeAddr,
+          8
+        ):
+          handleData.requestState.httpVersion = Http11
+        elif equalMem(
+          handleData.recvBuffer[space2 + 1].addr,
+          http10[0].unsafeAddr,
+          8
+        ):
+          handleData.requestState.httpVersion = Http10
+        else:
+          return true # Unsupported HTTP version, close the connection
+      else: # This is a header
+        let splitAt = handleData.recvBuffer.find(
+          ':',
+          lineStart,
+          lineStart + lineLen - 1
+        )
+        if splitAt == -1:
+          # Malformed header, include it for debugging purposes
+          var line = handleData.recvBuffer[lineStart ..< lineStart + lineLen]
+          handleData.requestState.headers.add((move line, ""))
+        else:
+          var
+            leftStart = lineStart
+            leftLen = splitAt - leftStart
+            rightStart = splitAt + 1
+            rightLen = lineStart + lineLen - rightStart
 
-    if requestLineParts[2] == "HTTP/1.0":
-      handleData.requestState.httpVersion = Http10
-    elif requestLineParts[2] == "HTTP/1.1":
-      handleData.requestState.httpVersion = Http11
-    else:
-      return true # Unsupported HTTP version, close the connection
+          while leftLen > 0 and handleData.recvBuffer[leftStart] in Whitespace:
+            inc leftStart
+            dec leftLen
+          while leftLen > 0 and handleData.recvBuffer[leftStart + leftLen - 1] in Whitespace:
+            dec leftLen
+          while rightLen > 0 and handleData.recvBuffer[rightStart] in Whitespace:
+            inc rightStart
+            dec rightLen
+          while leftLen > 0 and handleData.recvBuffer[rightStart + rightLen - 1] in Whitespace:
+            dec rightLen
 
-    for i in 1 ..< headerLines.len:
-      let parts = headerLines[i].split(": ")
-      if parts.len == 2:
-        handleData.requestState.headers.add((parts[0], parts[1]))
-      else:
-        handleData.requestState.headers.add((headerLines[i], ""))
+          handleData.requestState.headers.add((
+            handleData.recvBuffer[leftStart ..< leftStart + leftLen],
+            handleData.recvBuffer[rightStart ..< rightStart + rightLen]
+          ))
+
+      lineStart = lineEnd + 2
+      inc lineNum
+
+    # Above does the same thing but without so many allocations
+    # var
+    #   headerLines: seq[string]
+    #   nextLineStart: int
+    # while true:
+    #   let lineEnd = handleData.recvBuffer.find(
+    #     "\r\n",
+    #     nextLineStart,
+    #     headersEnd
+    #   )
+    #   if lineEnd == -1:
+    #     var line = handleData.recvBuffer[nextLineStart ..< headersEnd].strip()
+    #     headerLines.add(move line)
+    #     break
+    #   else:
+    #     headerLines.add(handleData.recvBuffer[nextLineStart ..< lineEnd].strip())
+    #     nextLineStart = lineEnd + 2
+
+    # let
+    #   requestLine = headerLines[0]
+    #   requestLineParts = requestLine.split(" ")
+    # if requestLineParts.len != 3:
+    #   return true # Malformed request line, close the connection
+
+    # handleData.requestState.httpMethod = requestLineParts[0]
+    # handleData.requestState.uri = requestLineParts[1]
+
+    # if requestLineParts[2] == "HTTP/1.0":
+    #   handleData.requestState.httpVersion = Http10
+    # elif requestLineParts[2] == "HTTP/1.1":
+    #   handleData.requestState.httpVersion = Http11
+    # else:
+    #   return true # Unsupported HTTP version, close the connection
+
+    # for i in 1 ..< headerLines.len:
+    #   let parts = headerLines[i].split(":")
+    #   if parts.len == 2:
+    #     handleData.requestState.headers.add((parts[0].strip(), parts[1].strip()))
+    #   else:
+    #     handleData.requestState.headers.add((headerLines[i], ""))
 
     handleData.requestState.chunked =
       handleData.requestState.headers.headerContainsToken(
@@ -691,10 +792,14 @@ proc afterRecvHttp(
         return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
+    # We do this so we can hopefully just move the receive buffer at the end
+    # instead of always copying a potentially huge body
     let bodyStart = headersEnd + 4
     if handleData.bytesReceived == bodyStart:
       handleData.bytesReceived = 0
     else:
+      # This could be optimized away by having [0] be [head] where head can move
+      # without having to copy the headers out
       copyMem(
         handleData.recvBuffer[0].addr,
         handleData.recvBuffer[bodyStart].addr,
@@ -754,13 +859,13 @@ proc afterRecvHttp(
         let newLen = max(handleData.requestState.body.len * 2, newContentLength)
         handleData.requestState.body.setLen(newLen)
 
-      copyMem(
-        handleData.requestState.body[handleData.requestState.contentLength].addr,
-        handleData.recvBuffer[chunkStart].addr,
-        chunkLen
-      )
-
-      handleData.requestState.contentLength += chunkLen
+      if chunkLen > 0:
+        copyMem(
+          handleData.requestState.body[handleData.requestState.contentLength].addr,
+          handleData.recvBuffer[chunkStart].addr,
+          chunkLen
+        )
+        handleData.requestState.contentLength += chunkLen
 
       # Remove this chunk from the receive buffer
       let
@@ -786,24 +891,30 @@ proc afterRecvHttp(
 
     # We have the entire request body
 
-    # If this request has a body, fill it
+    # If this request has a body
     if handleData.requestState.contentLength > 0:
-      handleData.requestState.body.setLen(handleData.requestState.contentLength)
-      copyMem(
-        handleData.requestState.body[0].addr,
-        handleData.recvBuffer[0].addr,
-        handleData.requestState.contentLength
-      )
-
-    # Remove this request from the receive buffer
-    let bytesRemaining =
-      handleData.bytesReceived - handleData.requestState.contentLength
-    copyMem(
-      handleData.recvBuffer[0].addr,
-      handleData.recvBuffer[handleData.requestState.contentLength].addr,
-      bytesRemaining
-    )
-    handleData.bytesReceived = bytesRemaining
+      # If the receive buffer only has the body in it, just move it and reset
+      # the receive buffer
+      if handleData.requestState.contentLength == handleData.bytesReceived:
+        handleData.requestState.body = move handleData.recvBuffer
+        handleData.recvBuffer.setLen(initialRecvBufferLen)
+      else:
+        # Copy the body out of the buffer
+        handleData.requestState.body.setLen(handleData.requestState.contentLength)
+        copyMem(
+          handleData.requestState.body[0].addr,
+          handleData.recvBuffer[0].addr,
+          handleData.requestState.contentLength
+        )
+        # Remove this request from the receive buffer
+        let bytesRemaining =
+          handleData.bytesReceived - handleData.requestState.contentLength
+        copyMem(
+          handleData.recvBuffer[0].addr,
+          handleData.recvBuffer[handleData.requestState.contentLength].addr,
+          bytesRemaining
+        )
+        handleData.bytesReceived = bytesRemaining
 
     var request = server.popRequest(clientSocket, handleData)
     server.postTask(WorkerTask(request: move request))
