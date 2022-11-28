@@ -1263,6 +1263,10 @@ proc newServer*(
   if handler == nil:
     raise newException(MummyError, "The request handler must not be nil")
 
+  var workerThreads = workerThreads
+  when defined(mummyNoWorkers): # For testing, fuzzing etc
+    workerThreads = 0
+
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
