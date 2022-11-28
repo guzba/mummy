@@ -63,9 +63,9 @@ type
     taskQueue: Deque[WorkerTask]
     taskQueueLock: Lock
     taskQueueCond: Cond
-    responseQueue: Deque[EncodedResponse]
+    responseQueue: Deque[OutgoingBuffer]
     responseQueueLock: Lock
-    sendQueue: Deque[EncodedFrame]
+    sendQueue: Deque[OutgoingBuffer]
     sendQueueLock: Lock
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
     websocketQueuesLock: Lock
@@ -85,7 +85,7 @@ type
     outgoingBuffers: Deque[OutgoingBuffer]
     closeFrameQueuedAt: float64
     upgradedToWebSocket, closeFrameSent: bool
-    sendsWaitingForUpgrade: seq[EncodedFrame]
+    sendsWaitingForUpgrade: seq[OutgoingBuffer]
 
   IncomingRequestState = object
     headersParsed, chunked: bool
@@ -100,20 +100,11 @@ type
     buffer: string
     frameLen: int
 
-  OutgoingBuffer = ref object
+  OutgoingBuffer {.acyclic.} = ref object
+    clientSocket: SocketHandle
     closeConnection, isWebSocketUpgrade, isCloseFrame: bool
     buffer1, buffer2: string
     bytesSent: int
-
-  EncodedResponse {.acyclic.} = ref object
-    clientSocket: SocketHandle
-    isWebSocketUpgrade, closeConnection: bool
-    buffer1, buffer2: string
-
-  EncodedFrame {.acyclic.} = ref object
-    clientSocket: SocketHandle
-    isCloseFrame: bool
-    buffer1, buffer2: string
 
   WebSocketUpdate {.acyclic.} = ref object
     event: WebSocketEvent
@@ -249,7 +240,7 @@ proc send*(
   data: sink string,
   kind = TextMessage,
 ) {.raises: [], gcsafe.} =
-  let encodedFrame = EncodedFrame()
+  let encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
 
   case kind:
@@ -271,7 +262,7 @@ proc send*(
   websocket.server.sendQueued.trigger2()
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
-  let encodedFrame = EncodedFrame()
+  let encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
@@ -288,7 +279,7 @@ proc respond*(
   headers: sink HttpHeaders = newSeq[(string, string)](),
   body: sink string = ""
 ) {.raises: [], gcsafe.} =
-  var encodedResponse = EncodedResponse()
+  var encodedResponse = OutgoingBuffer()
   encodedResponse.clientSocket = request.clientSocket
   encodedResponse.closeConnection =
     request.httpVersion == Http10 # Default behavior
@@ -853,20 +844,6 @@ proc afterSend(
   if handleData.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
-proc convertToOutgoingBuffer(encodedFrame: EncodedFrame): OutgoingBuffer =
-  result = OutgoingBuffer()
-  result.buffer1 = move encodedFrame.buffer1
-  result.buffer2 = move encodedFrame.buffer2
-  result.isCloseFrame = encodedFrame.isCloseFrame
-
-proc convertToOutgoingBuffer(encodedResponse: EncodedResponse): OutgoingBuffer =
-  result = OutgoingBuffer()
-  result.closeConnection = encodedResponse.closeConnection
-  result.isWebSocketUpgrade =
-    encodedResponse.isWebSocketUpgrade
-  result.buffer1 = move encodedResponse.buffer1
-  result.buffer2 = move encodedResponse.buffer2
-
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
   if server.selector != nil:
     try:
@@ -921,7 +898,7 @@ proc loopForever(
         let eventHandleData = server.selector.getData(readyKey.fd)
         if eventHandleData.forEvent == server.responseQueued:
           while true:
-            var encodedResponse: EncodedResponse
+            var encodedResponse: OutgoingBuffer
             acquire(server.responseQueueLock)
             if server.responseQueue.len > 0:
               encodedResponse = server.responseQueue.popFirst()
@@ -934,9 +911,7 @@ proc loopForever(
             if encodedResponse.clientSocket in server.selector:
               let clientHandleData =
                 server.selector.getData(encodedResponse.clientSocket)
-
-              let outgoingBuffer = encodedResponse.convertToOutgoingBuffer()
-              clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
+              clientHandleData.outgoingBuffers.addLast(encodedResponse)
               server.selector.updateHandle2(
                 encodedResponse.clientSocket,
                 {Read, Write}
@@ -957,8 +932,7 @@ proc loopForever(
                       discard # Drop this message
                       # TODO: log?
                     else:
-                      let outgoingBuffer = encodedFrame.convertToOutgoingBuffer()
-                      clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
+                      clientHandleData.outgoingBuffers.addLast(encodedFrame)
                       if encodedFrame.isCloseFrame:
                         clientHandleData.closeFrameQueuedAt = epochTime()
                   clientHandleData.sendsWaitingForUpgrade.setLen(0)
@@ -966,7 +940,7 @@ proc loopForever(
               discard # TODO: log?
         elif eventHandleData.forEvent == server.sendQueued:
           while true:
-            var encodedFrame: EncodedFrame
+            var encodedFrame: OutgoingBuffer
             acquire(server.sendQueueLock)
             if server.sendQueue.len > 0:
               encodedFrame = server.sendQueue.popFirst()
@@ -986,8 +960,7 @@ proc loopForever(
                   discard # Drop this message
                   # TODO: log?
                 else:
-                  let outgoingBuffer = encodedFrame.convertToOutgoingBuffer()
-                  clientHandleData.outgoingBuffers.addLast(outgoingBuffer)
+                  clientHandleData.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
                     clientHandleData.closeFrameQueuedAt = epochTime()
                   server.selector.updateHandle2(
