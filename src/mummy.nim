@@ -333,7 +333,7 @@ proc respond*(
   encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
   if encodedResponse.buffer1.len + body.len < 32 * 1024:
     # There seems to be a harsh penalty on multiple send() calls on Linux
-    # with ab -k so just use 1 buffer if the body is small enough
+    # so just use 1 buffer if the body is small enough
     encodedResponse.buffer1 &= body
   else:
     encodedResponse.buffer2 = move body
