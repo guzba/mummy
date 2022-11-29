@@ -848,8 +848,8 @@ proc afterRecvHttp(
       handleData.bytesReceived = bytesRemaining
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
-        var request = server.popRequest(clientSocket, handleData)
-        server.postTask(WorkerTask(request: move request))
+        let request = server.popRequest(clientSocket, handleData)
+        server.postTask(WorkerTask(request: request))
         return false
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
@@ -885,8 +885,8 @@ proc afterRecvHttp(
         )
         handleData.bytesReceived = bytesRemaining
 
-    var request = server.popRequest(clientSocket, handleData)
-    server.postTask(WorkerTask(request: move request))
+    let request = server.popRequest(clientSocket, handleData)
+    server.postTask(WorkerTask(request: request))
 
 proc afterRecv(
   server: Server,
