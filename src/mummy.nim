@@ -1190,7 +1190,10 @@ proc loopForever(
         websocket.postWebSocketUpdate(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
-  server.shutdown.trigger2()
+  if server.socket.int != 0:
+    server.shutdown.trigger2()
+  else:
+    server.destroy(true)
 
 proc serve*(
   server: Server,
