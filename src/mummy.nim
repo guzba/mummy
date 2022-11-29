@@ -3,6 +3,11 @@ import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
     std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
     zippy
 
+when defined(linux):
+  import posix
+
+  var SOCK_NONBLOCK* {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
+
 export Port, common
 
 when not defined(gcArc) and not defined(gcOrc):
@@ -497,14 +502,14 @@ proc afterRecvWebSocket(
         return false # Need to receive more bytes
       var l: uint16
       copyMem(l.addr, handleData.recvBuffer[pos].addr, 2)
-      payloadLen = l.htons.int
+      payloadLen = nativesockets.htons(l).int
       pos += 2
     else:
       if handleData.bytesReceived < 10:
         return false # Need to receive more bytes
       var l: uint32
       copyMem(l.addr, handleData.recvBuffer[pos + 4].addr, 4)
-      payloadLen = l.htonl.int
+      payloadLen = nativesockets.htonl(l).int
       pos += 8
 
     if handleData.frameState.frameLen + payloadLen > server.maxMessageLen:
@@ -1114,11 +1119,34 @@ proc loopForever(
 
       if readyKey.fd == server.socket.int:
         if Read in readyKey.events:
-          let (clientSocket, _) = server.socket.accept()
+          let (clientSocket, _) =
+            when defined(linux):
+              var
+                sockAddr: SockAddr
+                addrLen = sizeof(sockAddr).SockLen
+              let
+                socket =
+                  accept4(
+                    server.socket,
+                    sockAddr.addr,
+                    addrLen.addr,
+                    SOCK_CLOEXEC or SOCK_NONBLOCK
+                  )
+                sockAddrStr =
+                  try:
+                    getAddrString(sockAddr.addr)
+                  except:
+                    ""
+              (socket, sockAddrStr)
+            else:
+              server.socket.accept()
+
           if clientSocket == osInvalidSocket:
             continue
 
-          clientSocket.setBlocking(false)
+          when not defined(linux):
+            clientSocket.setBlocking(false)
+
           server.clientSockets.incl(clientSocket)
 
           let handleData = HandleData()
@@ -1230,7 +1258,12 @@ proc serve*(
   server.address = address
 
   try:
-    server.socket = createNativeSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP, false)
+    server.socket = createNativeSocket(
+      Domain.AF_INET,
+      SockType.SOCK_STREAM,
+      Protocol.IPPROTO_TCP,
+      false
+    )
     if server.socket == osInvalidSocket:
       raiseOSError(osLastError())
 
@@ -1240,9 +1273,9 @@ proc serve*(
     let ai = getAddrInfo(
       address,
       port,
-      AF_INET,
-      SOCK_STREAM,
-      IPPROTO_TCP
+      Domain.AF_INET,
+      SockType.SOCK_STREAM,
+      Protocol.IPPROTO_TCP,
     )
     try:
       if bindAddr(server.socket, ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
@@ -1250,7 +1283,7 @@ proc serve*(
     finally:
       freeAddrInfo(ai)
 
-    if server.socket.listen(listenBacklogLen) < 0:
+    if nativesockets.listen(server.socket, listenBacklogLen) < 0:
       raiseOSError(osLastError())
 
     server.selector = newSelector[HandleData]()
