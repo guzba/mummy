@@ -1,7 +1,7 @@
 import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
     std/hashes, std/locks, std/nativesockets, std/os, std/parseutils,
     std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
-    zippy
+    zippy, std/atomics
 
 export Port, common
 
@@ -68,11 +68,11 @@ type
     taskQueueLock: Lock
     taskQueueCond: Cond
     responseQueue: Deque[OutgoingBuffer]
-    responseQueueLock: Lock
+    responseQueueLock: Atomic[bool]
     sendQueue: Deque[OutgoingBuffer]
-    sendQueueLock: Lock
+    sendQueueLock: Atomic[bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
-    websocketQueuesLock: Lock
+    websocketQueuesLock: Atomic[bool]
 
   Server* = ptr ServerObj
 
@@ -131,6 +131,27 @@ proc hash*(websocket: WebSocket): Hash =
   h = h !& hash(websocket.server)
   h = h !& hash(websocket.clientSocket)
   return !$h
+
+# proc pause() {.importc: "__builtin_ia32_pause", cdecl.}
+
+template withLock(lock: var Atomic[bool], body: untyped): untyped =
+    # TAS
+    while lock.exchange(true, moAcquire): # Until we get the lock
+      discard
+    try:
+      body
+    finally:
+      lock.store(false, moRelease)
+    # # TTAS
+    # while true:
+    #   if not lock.exchange(true, moAcquire): # If we got the lock
+    #     break
+    #   while lock.load(moRelaxed): # While still locked
+    #     discard # pause()
+    # try:
+    #   body
+    # finally:
+    #   lock.store(false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
@@ -216,16 +237,15 @@ proc workerProc(server: Server) =
     else: # WebSocket
       while true: # Process the entire websocket queue
         var update: WebSocketUpdate
-        acquire(server.websocketQueuesLock)
-        if task.websocket in server.websocketQueues:
-          try:
-            if server.websocketQueues[task.websocket].len > 0:
-              update = server.websocketQueues[task.websocket].popFirst()
-            else:
-              server.websocketQueues.del(task.websocket)
-          except KeyError:
-            discard
-        release(server.websocketQueuesLock)
+        withLock server.websocketQueuesLock:
+          if task.websocket in server.websocketQueues:
+            try:
+              if server.websocketQueues[task.websocket].len > 0:
+                update = server.websocketQueues[task.websocket].popFirst()
+              else:
+                server.websocketQueues.del(task.websocket)
+            except KeyError:
+              discard
         if update == nil:
           break
 
@@ -259,9 +279,8 @@ proc send*(
 
   encodedFrame.buffer2 = move data
 
-  acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(move encodedFrame)
-  release(websocket.server.sendQueueLock)
+  withLock websocket.server.sendQueueLock:
+    websocket.server.sendQueue.addLast(move encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
@@ -271,9 +290,8 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
-  acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(move encodedFrame)
-  release(websocket.server.sendQueueLock)
+  withLock websocket.server.sendQueueLock:
+    websocket.server.sendQueue.addLast(move encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
@@ -342,9 +360,8 @@ proc respond*(
     "websocket"
   )
 
-  acquire(request.server.responseQueueLock)
-  request.server.responseQueue.addLast(move encodedResponse)
-  release(request.server.responseQueueLock)
+  withLock request.server.responseQueueLock:
+    request.server.responseQueue.addLast(move encodedResponse)
 
   request.server.responseQueued.trigger2()
 
@@ -408,18 +425,17 @@ proc postWebSocketUpdate(
 
   var needsWorkQueueEntry: bool
 
-  acquire(websocket.server.websocketQueuesLock)
-  if websocket in websocket.server.websocketQueues:
-    try:
-      websocket.server.websocketQueues[websocket].addLast(move update)
-    except KeyError:
-      assert false # Notice this when not a release build
-  else:
-    var queue: Deque[WebSocketUpdate]
-    queue.addLast(move update)
-    websocket.server.websocketQueues[websocket] = move queue
-    needsWorkQueueEntry = true
-  release(websocket.server.websocketQueuesLock)
+  withLock websocket.server.websocketQueuesLock:
+    if websocket in websocket.server.websocketQueues:
+      try:
+        websocket.server.websocketQueues[websocket].addLast(move update)
+      except KeyError:
+        assert false # Notice this when not a release build
+    else:
+      var queue: Deque[WebSocketUpdate]
+      queue.addLast(move update)
+      websocket.server.websocketQueues[websocket] = move queue
+      needsWorkQueueEntry = true
 
   if needsWorkQueueEntry:
     websocket.server.postTask(WorkerTask(websocket: websocket))
@@ -971,9 +987,6 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     joinThreads(server.workerThreads)
   deinitLock(server.taskQueueLock)
   deinitCond(server.taskQueueCond)
-  deinitLock(server.responseQueueLock)
-  deinitLock(server.sendQueueLock)
-  deinitLock(server.websocketQueuesLock)
   try:
     server.responseQueued.close()
   except:
@@ -1007,10 +1020,9 @@ proc loopForever(
         if eventHandleData.forEvent == server.responseQueued:
           while true:
             var encodedResponse: OutgoingBuffer
-            acquire(server.responseQueueLock)
-            if server.responseQueue.len > 0:
-              encodedResponse = server.responseQueue.popFirst()
-            release(server.responseQueueLock)
+            withLock server.responseQueueLock:
+              if server.responseQueue.len > 0:
+                encodedResponse = server.responseQueue.popFirst()
 
             if encodedResponse == nil:
               # The queue is empty
@@ -1049,10 +1061,9 @@ proc loopForever(
         elif eventHandleData.forEvent == server.sendQueued:
           while true:
             var encodedFrame: OutgoingBuffer
-            acquire(server.sendQueueLock)
-            if server.sendQueue.len > 0:
-              encodedFrame = server.sendQueue.popFirst()
-            release(server.sendQueueLock)
+            withLock server.sendQueueLock:
+              if server.sendQueue.len > 0:
+                encodedFrame = server.sendQueue.popFirst()
 
             if encodedFrame == nil:
               # The queue is empty
@@ -1272,9 +1283,6 @@ proc newServer*(
 
   initLock(result.taskQueueLock)
   initCond(result.taskQueueCond)
-  initLock(result.responseQueueLock)
-  initLock(result.sendQueueLock)
-  initLock(result.websocketQueuesLock)
 
   result.workerThreads.setLen(workerThreads)
 
