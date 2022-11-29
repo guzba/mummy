@@ -61,7 +61,7 @@ type
     websocketHandler: WebSocketHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
     workerThreads: seq[Thread[Server]]
-    veryBad: bool
+    destroyCalled: bool
     socket: SocketHandle
     selector: Selector[HandleData]
     responseQueued, sendQueued, shutdown: SelectEvent
@@ -199,10 +199,10 @@ proc workerProc(server: Server) =
   while true:
     acquire(server.taskQueueLock)
 
-    while server.taskQueue.len == 0 and not server.veryBad:
+    while server.taskQueue.len == 0 and not server.destroyCalled:
       wait(server.taskQueueCond, server.taskQueueLock)
 
-    if server.veryBad:
+    if server.destroyCalled:
       release(server.taskQueueLock)
       return
 
@@ -277,9 +277,8 @@ proc send*(
 
   encodedFrame.buffer2 = move data
 
-  acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(move encodedFrame)
-  release(websocket.server.sendQueueLock)
+  withLock websocket.server.sendQueueLock:
+    websocket.server.sendQueue.addLast(move encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
@@ -289,9 +288,8 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
-  acquire(websocket.server.sendQueueLock)
-  websocket.server.sendQueue.addLast(move encodedFrame)
-  release(websocket.server.sendQueueLock)
+  withLock websocket.server.sendQueueLock:
+    websocket.server.sendQueue.addLast(move encodedFrame)
 
   websocket.server.sendQueued.trigger2()
 
@@ -360,9 +358,8 @@ proc respond*(
     "websocket"
   )
 
-  acquire(request.server.responseQueueLock)
-  request.server.responseQueue.addLast(move encodedResponse)
-  release(request.server.responseQueueLock)
+  withLock request.server.responseQueueLock:
+    request.server.responseQueue.addLast(move encodedResponse)
 
   request.server.responseQueued.trigger2()
 
@@ -411,9 +408,8 @@ proc upgradeToWebSocket*(
   request.respond(101, headers, "")
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
-  acquire(server.taskQueueLock)
-  server.taskQueue.addLast(task)
-  release(server.taskQueueLock)
+  withLock server.taskQueueLock:
+    server.taskQueue.addLast(task)
   signal(server.taskQueueCond)
 
 proc postWebSocketUpdate(
@@ -976,9 +972,8 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     server.socket.close()
   for clientSocket in server.clientSockets:
     clientSocket.close()
-  acquire(server.taskQueueLock)
-  server.veryBad = true
-  release(server.taskQueueLock)
+  withLock server.taskQueueLock:
+    server.destroyCalled = true
   broadcast(server.taskQueueCond)
   if joinThreads:
     joinThreads(server.workerThreads)
