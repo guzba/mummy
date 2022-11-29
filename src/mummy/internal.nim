@@ -99,10 +99,3 @@ proc encodeHeaders*(
   result[pos + 0] = '\r'
   result[pos + 1] = '\n'
   pos += 2
-
-  # ^ This but with more allocations
-  # result = newStringOfCap(headersLen)
-  # result.add statusLine
-  # for (k, v) in headers:
-  #   result.add k & ": " & v & "\r\n" # Optimizable
-  # result.add "\r\n"

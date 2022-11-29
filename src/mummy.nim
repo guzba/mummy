@@ -738,47 +738,6 @@ proc afterRecvHttp(
       lineStart = lineEnd + 2
       inc lineNum
 
-    # Above does the same thing but without so many allocations
-    # var
-    #   headerLines: seq[string]
-    #   nextLineStart: int
-    # while true:
-    #   let lineEnd = handleData.recvBuffer.find(
-    #     "\r\n",
-    #     nextLineStart,
-    #     headersEnd
-    #   )
-    #   if lineEnd == -1:
-    #     var line = handleData.recvBuffer[nextLineStart ..< headersEnd].strip()
-    #     headerLines.add(move line)
-    #     break
-    #   else:
-    #     headerLines.add(handleData.recvBuffer[nextLineStart ..< lineEnd].strip())
-    #     nextLineStart = lineEnd + 2
-
-    # let
-    #   requestLine = headerLines[0]
-    #   requestLineParts = requestLine.split(" ")
-    # if requestLineParts.len != 3:
-    #   return true # Malformed request line, close the connection
-
-    # handleData.requestState.httpMethod = requestLineParts[0]
-    # handleData.requestState.uri = requestLineParts[1]
-
-    # if requestLineParts[2] == "HTTP/1.0":
-    #   handleData.requestState.httpVersion = Http10
-    # elif requestLineParts[2] == "HTTP/1.1":
-    #   handleData.requestState.httpVersion = Http11
-    # else:
-    #   return true # Unsupported HTTP version, close the connection
-
-    # for i in 1 ..< headerLines.len:
-    #   let parts = headerLines[i].split(":")
-    #   if parts.len == 2:
-    #     handleData.requestState.headers.add((parts[0].strip(), parts[1].strip()))
-    #   else:
-    #     handleData.requestState.headers.add((headerLines[i], ""))
-
     handleData.requestState.chunked =
       handleData.requestState.headers.headerContainsToken(
         "Transfer-Encoding", "chunked"
