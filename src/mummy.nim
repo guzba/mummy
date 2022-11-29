@@ -73,6 +73,7 @@ type
     responseQueueLock: Lock
     sendQueue: Deque[OutgoingBuffer]
     sendQueueLock: Lock
+    websocketClaimed: Table[WebSocket, bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
     websocketQueuesLock: Lock
 
@@ -218,18 +219,28 @@ proc workerProc(server: Server) =
       `=destroy`(task.request[])
       deallocShared(task.request)
     else: # WebSocket
+      withLock server.websocketQueuesLock:
+        if server.websocketClaimed.getOrDefault(task.websocket, true):
+          # If this websocket has been claimed or if it is not present in
+          # the table (which indicates it has been closed), skip this task
+          return
+        # Claim this websocket
+        server.websocketClaimed[task.websocket] = true
+
       while true: # Process the entire websocket queue
         var update: WebSocketUpdate
-        acquire(server.websocketQueuesLock)
-        if task.websocket in server.websocketQueues:
+        withLock server.websocketQueuesLock:
           try:
             if server.websocketQueues[task.websocket].len > 0:
               update = server.websocketQueues[task.websocket].popFirst()
+              if update.event == CloseEvent:
+                server.websocketQueues.del(task.websocket)
+                server.websocketClaimed.del(task.websocket)
             else:
-              server.websocketQueues.del(task.websocket)
+              server.websocketClaimed[task.websocket] = false
           except KeyError:
-            discard
-        release(server.websocketQueuesLock)
+            assert false # Notice this when not a release build
+
         if update == nil:
           break
 
@@ -242,6 +253,9 @@ proc workerProc(server: Server) =
         except:
           # TODO: log?
           echo getCurrentExceptionMsg()
+
+        if update.event == CloseEvent:
+          break
 
 proc send*(
   websocket: WebSocket,
@@ -404,28 +418,23 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
-  update: var WebSocketUpdate
+  update: WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
     # TODO: log?
     return
 
-  var needsWorkQueueEntry: bool
+  var needsTask: bool
 
-  acquire(websocket.server.websocketQueuesLock)
-  if websocket in websocket.server.websocketQueues:
+  withLock websocket.server.websocketQueuesLock:
     try:
-      websocket.server.websocketQueues[websocket].addLast(move update)
+      websocket.server.websocketQueues[websocket].addLast(update)
+      if not websocket.server.websocketClaimed[websocket]:
+        needsTask = true
     except KeyError:
       assert false # Notice this when not a release build
-  else:
-    var queue: Deque[WebSocketUpdate]
-    queue.addLast(move update)
-    websocket.server.websocketQueues[websocket] = move queue
-    needsWorkQueueEntry = true
-  release(websocket.server.websocketQueuesLock)
 
-  if needsWorkQueueEntry:
+  if needsTask:
     websocket.server.postTask(WorkerTask(websocket: websocket))
 
 proc sendCloseFrame(
@@ -996,78 +1005,66 @@ proc loopForever(
   var
     readyKeys: array[maxEventsPerSelectLoop, ReadyKey]
     receivedFrom, sentTo, needClosing: seq[SocketHandle]
+    encodedResponses: seq[OutgoingBuffer]
+    encodedFrames: seq[OutgoingBuffer]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
     needClosing.setLen(0)
+    encodedResponses.setLen(0)
+    encodedFrames.setLen(0)
+
     let readyCount = server.selector.selectInto(-1, readyKeys)
+
+    var responseQueuedTriggered, sendQueuedTriggered, shutdownTriggered: bool
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
-
-      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
-
       if User in readyKey.events:
         let eventHandleData = server.selector.getData(readyKey.fd)
         if eventHandleData.forEvent == server.responseQueued:
-          while true:
-            var encodedResponse: OutgoingBuffer
-            acquire(server.responseQueueLock)
-            if server.responseQueue.len > 0:
-              encodedResponse = server.responseQueue.popFirst()
-            release(server.responseQueueLock)
+          responseQueuedTriggered = true
+        if eventHandleData.forEvent == server.sendQueued:
+          sendQueuedTriggered = true
+        elif eventHandleData.forEvent == server.shutdown:
+          shutdownTriggered = true
+        else:
+          discard
 
-            if encodedResponse == nil:
-              # The queue is empty
-              break
+    if responseQueuedTriggered:
+      withLock server.responseQueueLock:
+        while server.responseQueue.len > 0:
+          encodedResponses.add(server.responseQueue.popFirst())
 
-            if encodedResponse.clientSocket in server.selector:
-              let clientHandleData =
-                server.selector.getData(encodedResponse.clientSocket)
-              clientHandleData.outgoingBuffers.addLast(encodedResponse)
-              server.selector.updateHandle2(
-                encodedResponse.clientSocket,
-                {Read, Write}
-              )
+      for encodedResponse in encodedResponses:
+        if encodedResponse.clientSocket in server.selector:
+          let clientHandleData =
+            server.selector.getData(encodedResponse.clientSocket)
 
-              if encodedResponse.isWebSocketUpgrade:
-                clientHandleData.upgradedToWebSocket = true
-                if clientHandleData.bytesReceived > 0:
-                  # Why have we received bytes when we are upgrading the connection?
-                  needClosing.add(readyKey.fd.SocketHandle)
-                  clientHandleData.sendsWaitingForUpgrade.setLen(0)
-                  # TODO: log?
-                  continue
-                # Are there any sends that were waiting for this response?
-                if clientHandleData.sendsWaitingForUpgrade.len > 0:
-                  for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
-                    if clientHandleData.closeFrameQueuedAt > 0:
-                      discard # Drop this message
-                      # TODO: log?
-                    else:
-                      clientHandleData.outgoingBuffers.addLast(encodedFrame)
-                      if encodedFrame.isCloseFrame:
-                        clientHandleData.closeFrameQueuedAt = epochTime()
-                  clientHandleData.sendsWaitingForUpgrade.setLen(0)
-            else:
-              discard # TODO: log?
-        elif eventHandleData.forEvent == server.sendQueued:
-          while true:
-            var encodedFrame: OutgoingBuffer
-            acquire(server.sendQueueLock)
-            if server.sendQueue.len > 0:
-              encodedFrame = server.sendQueue.popFirst()
-            release(server.sendQueueLock)
+          clientHandleData.outgoingBuffers.addLast(encodedResponse)
+          server.selector.updateHandle2(
+            encodedResponse.clientSocket,
+            {Read, Write}
+          )
 
-            if encodedFrame == nil:
-              # The queue is empty
-              break
-
-            if encodedFrame.clientSocket in server.selector:
-              let clientHandleData =
-                server.selector.getData(encodedFrame.clientSocket)
-
-              # Have we sent the upgrade response yet?
-              if clientHandleData.upgradedToWebSocket:
+          if encodedResponse.isWebSocketUpgrade:
+            clientHandleData.upgradedToWebSocket = true
+            let websocket = WebSocket(
+              server: server,
+              clientSocket: encodedResponse.clientSocket
+            )
+            var websocketQueue = initDeque[WebSocketUpdate]()
+            withLock server.websocketQueuesLock:
+              server.websocketQueues[websocket] = move websocketQueue
+              server.websocketClaimed[websocket] = false
+            if clientHandleData.bytesReceived > 0:
+              # Why have we received bytes when we are upgrading the connection?
+              needClosing.add(websocket.clientSocket)
+              clientHandleData.sendsWaitingForUpgrade.setLen(0)
+              # TODO: log?
+              continue
+            # Are there any sends that were waiting for this response?
+            if clientHandleData.sendsWaitingForUpgrade.len > 0:
+              for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
                 if clientHandleData.closeFrameQueuedAt > 0:
                   discard # Drop this message
                   # TODO: log?
@@ -1075,21 +1072,49 @@ proc loopForever(
                   clientHandleData.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
                     clientHandleData.closeFrameQueuedAt = epochTime()
-                  server.selector.updateHandle2(
-                    encodedFrame.clientSocket,
-                    {Read, Write}
-                  )
-              else:
-                # If we haven't, queue this to wait for the upgrade response
-                clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
-            else:
-              discard # TODO: log?
-        elif eventHandleData.forEvent == server.shutdown:
-          server.destroy(true)
-          return
+              clientHandleData.sendsWaitingForUpgrade.setLen(0)
         else:
-          assert false # Notice this when not a release build
-      elif readyKey.fd == server.socket.int:
+          discard # TODO: log?
+
+    if sendQueuedTriggered:
+      withLock server.sendQueueLock:
+        while server.sendQueue.len > 0:
+          encodedFrames.add(server.sendQueue.popFirst())
+
+      for encodedFrame in encodedFrames:
+        if encodedFrame.clientSocket in server.selector:
+          let clientHandleData =
+            server.selector.getData(encodedFrame.clientSocket)
+
+          # Have we sent the upgrade response yet?
+          if clientHandleData.upgradedToWebSocket:
+            if clientHandleData.closeFrameQueuedAt > 0:
+              discard # Drop this message
+              # TODO: log?
+            else:
+              clientHandleData.outgoingBuffers.addLast(encodedFrame)
+              if encodedFrame.isCloseFrame:
+                clientHandleData.closeFrameQueuedAt = epochTime()
+              server.selector.updateHandle2(
+                encodedFrame.clientSocket,
+                {Read, Write}
+              )
+          else:
+            # If we haven't, queue this to wait for the upgrade response
+            clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
+        else:
+          discard # TODO: log?
+
+    if shutdownTriggered:
+      server.destroy(true)
+      return
+
+    for i in 0 ..< readyCount:
+      let readyKey = readyKeys[i]
+
+      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+
+      if readyKey.fd == server.socket.int:
         if Read in readyKey.events:
           let (clientSocket, _) = server.socket.accept()
           if clientSocket == osInvalidSocket:
