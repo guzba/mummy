@@ -1,5 +1,5 @@
 import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
-    std/hashes, std/locks, std/nativesockets, std/os, std/parseutils,
+    std/hashes, std/nativesockets, std/os, std/parseutils,
     std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
     zippy, std/atomics
 
@@ -7,6 +7,26 @@ when defined(linux):
   import posix
 
   var SOCK_NONBLOCK* {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
+
+const useLockAndCond = (not defined(linux)) or defined(mummyUseLockAndCond)
+
+when useLockAndCond:
+  import std/locks
+else:
+  proc eventfd(count: cuint, flags: cint): cint
+     {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
+
+  proc trigger(efd: cint) {.raises: [].} =
+    var v: uint64 = 1
+    while true:
+      let ret = write(efd, v.addr, sizeof(uint64))
+      if ret != sizeof(uint64):
+        let err = osLastError()
+        if err == OSErrorCode(EAGAIN):
+          continue
+        # TODO: log?
+        echo osErrorMsg(err) & " (code: " & $err & ")"
+      break
 
 export Port, common
 
@@ -65,15 +85,21 @@ type
     handler: RequestHandler
     websocketHandler: WebSocketHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
-    workerThreads: seq[Thread[Server]]
-    destroyCalled: bool
+    workerThreads: seq[Thread[(Server, int)]]
+    destroyCalled: Atomic[bool]
     socket: SocketHandle
     selector: Selector[HandleData]
     responseQueued, sendQueued, shutdown: SelectEvent
     clientSockets: HashSet[SocketHandle]
+    when useLockAndCond:
+      taskQueueLock: Lock
+      taskQueueCond: Cond
+    else:
+      taskQueueLock: Atomic[bool]
+      workerEventFds: seq[cint]
+      destroyCalledFd: cint
+      workersAwake: int
     taskQueue: Deque[WorkerTask]
-    taskQueueLock: Lock
-    taskQueueCond: Cond
     responseQueue: Deque[OutgoingBuffer]
     responseQueueLock: Atomic[bool]
     sendQueue: Deque[OutgoingBuffer]
@@ -219,21 +245,13 @@ proc trigger2(
     # Happens if SelectEvent has been closed
     discard
 
-proc workerProc(server: Server) =
-  while true:
-    acquire(server.taskQueueLock)
+proc workerProc(params: (Server, int)) =
+  ## The worker threads run the task queue here
+  let
+    server = params[0]
+    threadIdx = params[1]
 
-    while server.taskQueue.len == 0 and not server.destroyCalled:
-      wait(server.taskQueueCond, server.taskQueueLock)
-
-    if server.destroyCalled:
-      release(server.taskQueueLock)
-      return
-
-    var task = server.taskQueue.popFirst()
-
-    release(server.taskQueueLock)
-
+  proc runTask(task: WorkerTask) =
     if task.request != nil:
       try:
         server.handler(task.request)
@@ -280,6 +298,52 @@ proc workerProc(server: Server) =
 
         if update.event == CloseEvent:
           break
+
+  when useLockAndCond:
+    while true:
+      acquire(server.taskQueueLock)
+
+      while server.taskQueue.len == 0 and
+        not server.destroyCalled.load(moRelaxed):
+        wait(server.taskQueueCond, server.taskQueueLock)
+
+      if server.destroyCalled.load(moRelaxed):
+        release(server.taskQueueLock)
+        return
+
+      let task = server.taskQueue.popFirst()
+      release(server.taskQueueLock)
+
+      runTask(task)
+  else:
+    var pollFds: array[2, TPollfd]
+    pollFds[0].fd = server.workerEventFds[threadIdx]
+    pollFds[0].events = POLLIN
+    pollFds[1].fd = server.destroyCalledFd
+    pollFds[1].events = POLLIN
+
+    while true:
+      if server.destroyCalled.load(moRelaxed):
+        break
+      var
+        task: WorkerTask
+        poppedTask: bool
+      withLock server.taskQueueLock:
+        if server.taskQueue.len > 0:
+          task = server.taskQueue.popFirst()
+          poppedTask = true
+      if poppedTask:
+        runTask(task)
+      else:
+        # Go to sleep if there are no tasks to run
+        discard poll(pollFds[0].addr, 2, -1)
+        if pollFds[0].revents != 0:
+          var data: uint64 = 0
+          let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
+          if ret != sizeof(uint64):
+            let err = osLastError()
+            raiseOSError(err)
+            # TODO: log?
 
 proc send*(
   websocket: WebSocket,
@@ -432,9 +496,22 @@ proc upgradeToWebSocket*(
   request.respond(101, headers, "")
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
-  withLock server.taskQueueLock:
-    server.taskQueue.addLast(task)
-  signal(server.taskQueueCond)
+  when useLockAndCond:
+    withLock server.taskQueueLock:
+      server.taskQueue.addLast(task)
+    signal(server.taskQueueCond)
+  else:
+    withLock server.taskQueueLock:
+      # If the task queue is not empty, no threads could have fallen asleep
+      # If the task queue is empty, any number could have fallen asleep
+      if server.taskQueue.len == 0:
+        server.workersAwake = 0
+      server.taskQueue.addLast(task)
+
+    if server.workersAwake < server.workerThreads.len:
+      # Wake up a worker
+      server.workerEventFds[server.workersAwake].trigger()
+      inc server.workersAwake
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
@@ -869,7 +946,6 @@ proc afterRecvHttp(
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
         let request = server.popRequest(clientSocket, handleData)
         server.postTask(WorkerTask(request: request))
-        return false
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
       return true # Body is too large, close the connection
@@ -945,6 +1021,7 @@ proc afterSend(
     server.selector.updateHandle2(clientSocket, {Read})
 
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
+  server.destroyCalled.store(true, moRelease)
   if server.selector != nil:
     try:
       server.selector.close()
@@ -954,13 +1031,17 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     server.socket.close()
   for clientSocket in server.clientSockets:
     clientSocket.close()
-  withLock server.taskQueueLock:
-    server.destroyCalled = true
-  broadcast(server.taskQueueCond)
+  when useLockAndCond:
+    broadcast(server.taskQueueCond)
+  else:
+    server.destroyCalledFd.trigger()
   if joinThreads:
     joinThreads(server.workerThreads)
-    deinitLock(server.taskQueueLock)
-    deinitCond(server.taskQueueCond)
+    when useLockAndCond:
+      deinitLock(server.taskQueueLock)
+      deinitCond(server.taskQueueCond)
+    else:
+      discard
     try:
       server.responseQueued.close()
     except:
@@ -1308,9 +1389,6 @@ proc newServer*(
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
 
-  initLock(result.taskQueueLock)
-  initCond(result.taskQueueCond)
-
   result.workerThreads.setLen(workerThreads)
 
   # Stuff that can fail
@@ -1319,8 +1397,21 @@ proc newServer*(
     result.sendQueued = newSelectEvent()
     result.shutdown = newSelectEvent()
 
-    for workerThead in result.workerThreads.mitems:
-      createThread(workerThead, workerProc, result)
+    when useLockAndCond:
+      initLock(result.taskQueueLock)
+      initCond(result.taskQueueCond)
+    else:
+      result.workerEventFds.setLen(workerThreads)
+
+      for i in 0 ..< workerThreads:
+        result.workerEventFds[i] = eventfd(0, O_CLOEXEC or O_NONBLOCK)
+        if result.workerEventFds[i] == -1:
+          raiseOSError(osLastError())
+
+      result.destroyCalledFd = eventfd(0, O_CLOEXEC or O_NONBLOCK)
+
+    for i in 0 ..< workerThreads:
+      createThread(result.workerThreads[i], workerProc, (result, i))
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
