@@ -967,7 +967,6 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       server.selector.close()
     except:
       discard # Ignore
-  server.selector = nil # Since this lives on a pointer
   if server.socket.int != 0:
     server.socket.close()
   for clientSocket in server.clientSockets:
@@ -977,21 +976,25 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
   broadcast(server.taskQueueCond)
   if joinThreads:
     joinThreads(server.workerThreads)
-  deinitLock(server.taskQueueLock)
-  deinitCond(server.taskQueueCond)
-  deinitLock(server.responseQueueLock)
-  deinitLock(server.sendQueueLock)
-  deinitLock(server.websocketQueuesLock)
-  try:
-    server.responseQueued.close()
-  except:
-    discard # Ignore
-  try:
-    server.sendQueued.close()
-  except:
-    discard # Ignore
-  `=destroy`(server[])
-  deallocShared(server)
+    deinitLock(server.taskQueueLock)
+    deinitCond(server.taskQueueCond)
+    deinitLock(server.responseQueueLock)
+    deinitLock(server.sendQueueLock)
+    deinitLock(server.websocketQueuesLock)
+    try:
+      server.responseQueued.close()
+    except:
+      discard # Ignore
+    try:
+      server.sendQueued.close()
+    except:
+      discard # Ignore
+    `=destroy`(server[])
+    deallocShared(server)
+  else:
+    # This is not a clean exit, leak to avoid potential segfaults for now
+    # The process is likely going to be exiting anyway
+    discard
 
 proc loopForever(
   server: Server,
