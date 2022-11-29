@@ -51,8 +51,12 @@ proc requesterProc() =
     doAssert response.headers["Content-Encoding"] == "deflate"
     discard uncompress(response.body, dfDeflate)
 
+  sleep(1000) # Give the server some time to start up
+
   echo "Done, shut down the server"
   server.close()
+
+  sleep(1000) # Give the server some time to start up
 
 createThread(requesterThread, requesterProc)
 

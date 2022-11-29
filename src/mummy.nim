@@ -91,8 +91,9 @@ type
       taskQueueLock: Lock
       taskQueueCond: Cond
     else:
-      epollFd, taskQueuedFd, destroyCalledFd: cint
+      epollFd, signalFd, destroyCalledFd: cint
       taskQueueLock: Atomic[bool]
+      numWorkersAwake: Atomic[int]
     responseQueue: Deque[OutgoingBuffer]
     responseQueueLock: Atomic[bool]
     sendQueue: Deque[OutgoingBuffer]
@@ -243,6 +244,8 @@ proc trigger2(
 proc workerProc(server: Server) =
   ## The worker threads run the task queue here
 
+  server.numWorkersAwake.atomicInc()
+
   proc runTask(task: WorkerTask) =
     if task.request != nil:
       try:
@@ -306,32 +309,43 @@ proc workerProc(server: Server) =
       runTask(task)
   else:
     while true:
+      # echo "LOOP: ", getThreadId()
       if server.destroyCalled.load(moRelaxed):
+        # echo "exit: ", getThreadId()
         break
       var
         task: WorkerTask
         poppedTask: bool
+        queueLen: int
       withLock server.taskQueueLock:
         if server.taskQueue.len > 0:
           task = server.taskQueue.popFirst()
           poppedTask = true
+        queueLen = server.taskQueue.len
       if poppedTask:
+        if queueLen > 0 and server.numWorkersAwake.load(moAcquire) < server.workerThreads.len:
+          # Wake another thread
+          server.signalFd.trigger()
         runTask(task)
       else:
+        server.numWorkersAwake.atomicDec()
         # Wait to be woken up
         var event: EpollEvent
+        # echo "SLEEP ", getThreadId()
         let n = epoll_wait(server.epollFd, event.addr, 1, -1);
-        if n > 0:
+        # echo "WOKE UP ", getThreadId()
+        server.numWorkersAwake.atomicInc()
+        if n == 1:
           let fd = cast[cint](event.data.u64)
           if fd == server.destroyCalledFd:
+            server.numWorkersAwake.atomicDec()
             break
           var data: uint64 = 0
           let ret = posix.read(fd, data.addr, sizeof(uint64))
           if ret != sizeof(uint64):
             let err = osLastError()
-            if err == OSErrorCode(EAGAIN):
-              continue
-            raiseOSError(err)
+            if err != OSErrorCode(EAGAIN):
+              raiseOSError(err)
           # Thread has woken up, loop back to top and check on task queue
         else:
           assert false # Notice this when not a release build
@@ -492,7 +506,31 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   when useLockAndCond:
     signal(server.taskQueueCond)
   else:
-    server.taskQueuedFd.trigger()
+    doAssert false
+    server.signalFd.trigger()
+
+proc postTasks(server: Server, tasks: var seq[WorkerTask]) {.raises: [].} =
+  # echo "POST TASKS"
+  if tasks.len > 0:
+    withLock server.taskQueueLock:
+      for task in tasks:
+        server.taskQueue.addLast(task)
+    let awokeThreads = server.numWorkersAwake.load(moAcquire)
+    if awokeThreads < server.workerThreads.len:
+      server.signalFd.trigger()
+
+
+    # if tasks.len >= server.workerThreads.len:
+    #   when useLockAndCond:
+    #     broadcast(server.taskQueueCond)
+    #   else:
+    #     server.signalFd.trigger()
+    # else:
+    #   when useLockAndCond:
+    #     for _ in 0 ..< tasks.len:
+    #       signal(server.taskQueueCond)
+    #   else:
+    #     server.signalFd.trigger()
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
@@ -703,7 +741,8 @@ proc popRequest(
 proc afterRecvHttp(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  handleData: HandleData,
+  newRequests: var seq[Request]
 ): bool {.raises: [].} =
   # Have we completed parsing the headers?
   if not handleData.requestState.headersParsed:
@@ -967,7 +1006,8 @@ proc afterRecvHttp(
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
         var request = server.popRequest(clientSocket, handleData)
-        server.postTask(WorkerTask(request: move request))
+        # server.postTask(WorkerTask(request: move request))
+        newRequests.add(request)
         return false
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
@@ -1004,19 +1044,8 @@ proc afterRecvHttp(
         handleData.bytesReceived = bytesRemaining
 
     var request = server.popRequest(clientSocket, handleData)
-    server.postTask(WorkerTask(request: move request))
-
-proc afterRecv(
-  server: Server,
-  clientSocket: SocketHandle,
-  handleData: HandleData
-): bool {.raises: [IOSelectorsException].} =
-  # Have we upgraded this connection to a websocket?
-  # If not, treat incoming bytes as part of HTTP requests.
-  if handleData.upgradedToWebSocket:
-    server.afterRecvWebSocket(clientSocket, handleData)
-  else:
-    server.afterRecvHttp(clientSocket, handleData)
+    newRequests.add(request)
+    # server.postTask(WorkerTask(request: move request))
 
 proc afterSend(
   server: Server,
@@ -1064,7 +1093,8 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       deinitLock(server.taskQueueLock)
       deinitCond(server.taskQueueCond)
     else:
-      discard server.taskQueuedFd.close()
+      discard server.signalFd.close()
+      discard server.destroyCalledFd.close()
       discard server.epollFd.close()
     try:
       server.responseQueued.close()
@@ -1090,12 +1120,16 @@ proc loopForever(
     receivedFrom, sentTo, needClosing: seq[SocketHandle]
     encodedResponses: seq[OutgoingBuffer]
     encodedFrames: seq[OutgoingBuffer]
+    newRequests: seq[Request]
+    newTasks: seq[WorkerTask]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
     needClosing.setLen(0)
     encodedResponses.setLen(0)
     encodedFrames.setLen(0)
+    newRequests.setLen(0)
+    newTasks.setLen(0)
 
     let readyCount = server.selector.selectInto(-1, readyKeys)
 
@@ -1265,9 +1299,21 @@ proc loopForever(
         continue
       let
         handleData = server.selector.getData(clientSocket)
-        needsClosing = server.afterRecv(clientSocket, handleData)
+        needsClosing =
+          # Have we upgraded this connection to a websocket?
+          # If not, treat incoming bytes as part of HTTP requests.
+          if handleData.upgradedToWebSocket:
+            server.afterRecvWebSocket(clientSocket, handleData)
+          else:
+            server.afterRecvHttp(clientSocket, handleData, newRequests)
       if needsClosing:
         needClosing.add(clientSocket)
+
+    for request in newRequests.mitems:
+      newTasks.add(WorkerTask(request: move request))
+
+    if newTasks.len > 0:
+      server.postTasks(newTasks)
 
     for clientSocket in sentTo:
       if clientSocket in needClosing:
@@ -1420,17 +1466,17 @@ proc newServer*(
       ) != 0:
         raiseOSError(osLastError())
 
-      result.taskQueuedFd = eventfd(0, O_CLOEXEC or O_NONBLOCK)
-      if result.taskQueuedFd == -1:
+      result.signalFd = eventfd(0, O_CLOEXEC or O_NONBLOCK)
+      if result.signalFd == -1:
         raiseOSError(osLastError())
-      var taskQueuedEvent: EpollEvent
-      taskQueuedEvent.events = EPOLLIN or EPOLLET
-      taskQueuedEvent.data.u64 = cast[uint64](result.taskQueuedFd)
+      var signalEvent: EpollEvent
+      signalEvent.events = EPOLLIN or EPOLLET
+      signalEvent.data.u64 = cast[uint64](result.signalFd)
       if epoll_ctl(
         result.epollFd,
         EPOLL_CTL_ADD,
-        result.taskQueuedFd,
-        taskQueuedEvent.addr
+        result.signalFd,
+        signalEvent.addr
       ) != 0:
         raiseOSError(osLastError())
 
