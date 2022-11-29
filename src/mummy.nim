@@ -1088,84 +1088,66 @@ proc loopForever(
   var
     readyKeys: array[maxEventsPerSelectLoop, ReadyKey]
     receivedFrom, sentTo, needClosing: seq[SocketHandle]
+    encodedResponses: seq[OutgoingBuffer]
+    encodedFrames: seq[OutgoingBuffer]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
     needClosing.setLen(0)
+    encodedResponses.setLen(0)
+    encodedFrames.setLen(0)
+
     let readyCount = server.selector.selectInto(-1, readyKeys)
+
+    var responseQueuedTriggered, sendQueuedTriggered, shutdownTriggered: bool
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
-
-      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
-
       if User in readyKey.events:
         let eventHandleData = server.selector.getData(readyKey.fd)
         if eventHandleData.forEvent == server.responseQueued:
-          while true:
-            var encodedResponse: OutgoingBuffer
-            withLock server.responseQueueLock:
-              if server.responseQueue.len > 0:
-                encodedResponse = server.responseQueue.popFirst()
+          responseQueuedTriggered = true
+        if eventHandleData.forEvent == server.sendQueued:
+          sendQueuedTriggered = true
+        elif eventHandleData.forEvent == server.shutdown:
+          shutdownTriggered = true
+        else:
+          discard
 
-            if encodedResponse == nil:
-              # The queue is empty
-              break
+    if responseQueuedTriggered:
+      withLock server.responseQueueLock:
+        while server.responseQueue.len > 0:
+          encodedResponses.add(server.responseQueue.popFirst())
 
-            if encodedResponse.clientSocket in server.selector:
-              let clientHandleData =
-                server.selector.getData(encodedResponse.clientSocket)
-              clientHandleData.outgoingBuffers.addLast(encodedResponse)
-              server.selector.updateHandle2(
-                encodedResponse.clientSocket,
-                {Read, Write}
-              )
+      for encodedResponse in encodedResponses:
+        if encodedResponse.clientSocket in server.selector:
+          let clientHandleData =
+            server.selector.getData(encodedResponse.clientSocket)
 
-              if encodedResponse.isWebSocketUpgrade:
-                clientHandleData.upgradedToWebSocket = true
-                let websocket = WebSocket(
-                  server: server,
-                  clientSocket: encodedResponse.clientSocket
-                )
-                var websocketQueue = initDeque[WebSocketUpdate]()
-                withLock server.websocketQueuesLock:
-                  server.websocketQueues[websocket] = move websocketQueue
-                  server.websocketClaimed[websocket] = false
-                if clientHandleData.bytesReceived > 0:
-                  # Why have we received bytes when we are upgrading the connection?
-                  needClosing.add(readyKey.fd.SocketHandle)
-                  clientHandleData.sendsWaitingForUpgrade.setLen(0)
-                  # TODO: log?
-                  continue
-                # Are there any sends that were waiting for this response?
-                if clientHandleData.sendsWaitingForUpgrade.len > 0:
-                  for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
-                    if clientHandleData.closeFrameQueuedAt > 0:
-                      discard # Drop this message
-                      # TODO: log?
-                    else:
-                      clientHandleData.outgoingBuffers.addLast(encodedFrame)
-                      if encodedFrame.isCloseFrame:
-                        clientHandleData.closeFrameQueuedAt = epochTime()
-                  clientHandleData.sendsWaitingForUpgrade.setLen(0)
-            else:
-              discard # TODO: log?
-        elif eventHandleData.forEvent == server.sendQueued:
-          while true:
-            var encodedFrame: OutgoingBuffer
-            withLock server.sendQueueLock:
-              if server.sendQueue.len > 0:
-                encodedFrame = server.sendQueue.popFirst()
+          clientHandleData.outgoingBuffers.addLast(encodedResponse)
+          server.selector.updateHandle2(
+            encodedResponse.clientSocket,
+            {Read, Write}
+          )
 
-            if encodedFrame == nil:
-              # The queue is empty
-              break
-
-            if encodedFrame.clientSocket in server.selector:
-              let clientHandleData =
-                server.selector.getData(encodedFrame.clientSocket)
-
-              # Have we sent the upgrade response yet?
-              if clientHandleData.upgradedToWebSocket:
+          if encodedResponse.isWebSocketUpgrade:
+            clientHandleData.upgradedToWebSocket = true
+            let websocket = WebSocket(
+              server: server,
+              clientSocket: encodedResponse.clientSocket
+            )
+            var websocketQueue = initDeque[WebSocketUpdate]()
+            withLock server.websocketQueuesLock:
+              server.websocketQueues[websocket] = move websocketQueue
+              server.websocketClaimed[websocket] = false
+            if clientHandleData.bytesReceived > 0:
+              # Why have we received bytes when we are upgrading the connection?
+              needClosing.add(websocket.clientSocket)
+              clientHandleData.sendsWaitingForUpgrade.setLen(0)
+              # TODO: log?
+              continue
+            # Are there any sends that were waiting for this response?
+            if clientHandleData.sendsWaitingForUpgrade.len > 0:
+              for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
                 if clientHandleData.closeFrameQueuedAt > 0:
                   discard # Drop this message
                   # TODO: log?
@@ -1173,21 +1155,49 @@ proc loopForever(
                   clientHandleData.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
                     clientHandleData.closeFrameQueuedAt = epochTime()
-                  server.selector.updateHandle2(
-                    encodedFrame.clientSocket,
-                    {Read, Write}
-                  )
-              else:
-                # If we haven't, queue this to wait for the upgrade response
-                clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
-            else:
-              discard # TODO: log?
-        elif eventHandleData.forEvent == server.shutdown:
-          server.destroy(true)
-          return
+              clientHandleData.sendsWaitingForUpgrade.setLen(0)
         else:
-          assert false # Notice this when not a release build
-      elif readyKey.fd == server.socket.int:
+          discard # TODO: log?
+
+    if sendQueuedTriggered:
+      withLock server.sendQueueLock:
+        while server.sendQueue.len > 0:
+          encodedFrames.add(server.sendQueue.popFirst())
+
+      for encodedFrame in encodedFrames:
+        if encodedFrame.clientSocket in server.selector:
+          let clientHandleData =
+            server.selector.getData(encodedFrame.clientSocket)
+
+          # Have we sent the upgrade response yet?
+          if clientHandleData.upgradedToWebSocket:
+            if clientHandleData.closeFrameQueuedAt > 0:
+              discard # Drop this message
+              # TODO: log?
+            else:
+              clientHandleData.outgoingBuffers.addLast(encodedFrame)
+              if encodedFrame.isCloseFrame:
+                clientHandleData.closeFrameQueuedAt = epochTime()
+              server.selector.updateHandle2(
+                encodedFrame.clientSocket,
+                {Read, Write}
+              )
+          else:
+            # If we haven't, queue this to wait for the upgrade response
+            clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
+        else:
+          discard # TODO: log?
+
+    if shutdownTriggered:
+      server.destroy(true)
+      return
+
+    for i in 0 ..< readyCount:
+      let readyKey = readyKeys[i]
+
+      # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
+
+      if readyKey.fd == server.socket.int:
         if Read in readyKey.events:
           let (clientSocket, _) = server.socket.accept()
           if clientSocket == osInvalidSocket:
