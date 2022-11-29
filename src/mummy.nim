@@ -1,7 +1,7 @@
 import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
     std/hashes, std/locks, std/nativesockets, std/os, std/parseutils,
     std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
-    zippy
+    zippy, std/atomics
 
 when defined(linux):
   import posix
@@ -75,12 +75,12 @@ type
     taskQueueLock: Lock
     taskQueueCond: Cond
     responseQueue: Deque[OutgoingBuffer]
-    responseQueueLock: Lock
+    responseQueueLock: Atomic[bool]
     sendQueue: Deque[OutgoingBuffer]
-    sendQueueLock: Lock
+    sendQueueLock: Atomic[bool]
     websocketClaimed: Table[WebSocket, bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
-    websocketQueuesLock: Lock
+    websocketQueuesLock: Atomic[bool]
 
   Server* = ptr ServerObj
 
@@ -139,6 +139,25 @@ proc hash*(websocket: WebSocket): Hash =
   h = h !& hash(websocket.server)
   h = h !& hash(websocket.clientSocket)
   return !$h
+
+template withLock(lock: var Atomic[bool], body: untyped): untyped =
+    # TAS
+    while lock.exchange(true, moAcquire): # Until we get the lock
+      discard
+    try:
+      body
+    finally:
+      lock.store(false, moRelease)
+    # # TTAS
+    # while true:
+    #   if not lock.exchange(true, moAcquire): # If we got the lock
+    #     break
+    #   while lock.load(moRelaxed): # While still locked
+    #     discard # pause()
+    # try:
+    #   body
+    # finally:
+    #   lock.store(false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
@@ -942,9 +961,6 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     joinThreads(server.workerThreads)
     deinitLock(server.taskQueueLock)
     deinitCond(server.taskQueueCond)
-    deinitLock(server.responseQueueLock)
-    deinitLock(server.sendQueueLock)
-    deinitLock(server.websocketQueuesLock)
     try:
       server.responseQueued.close()
     except:
@@ -1294,9 +1310,6 @@ proc newServer*(
 
   initLock(result.taskQueueLock)
   initCond(result.taskQueueCond)
-  initLock(result.responseQueueLock)
-  initLock(result.sendQueueLock)
-  initLock(result.websocketQueuesLock)
 
   result.workerThreads.setLen(workerThreads)
 
