@@ -4,7 +4,6 @@ when not defined(mummyNoWorkers):
 include mummy
 
 import std/random
-
 randomize()
 
 const iterations = 1000

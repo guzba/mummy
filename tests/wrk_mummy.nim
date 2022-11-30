@@ -1,4 +1,4 @@
-import mummy, wrk_shared, os
+import mummy, os, wrk_shared
 
 proc handler(request: Request) =
   case request.uri:

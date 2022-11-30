@@ -1,4 +1,4 @@
-import std/asynchttpserver, std/asyncdispatch, std/strutils, wrk_shared
+import std/asyncdispatch, std/asynchttpserver, std/strutils, wrk_shared
 
 proc main {.async.} =
   let server = newAsyncHttpServer()

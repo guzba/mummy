@@ -1,12 +1,12 @@
-import mummy/common, mummy/internal, std/base64, std/cpuinfo, std/deques,
-    std/hashes, std/nativesockets, std/os, std/parseutils,
-    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times,
-    zippy, std/atomics
+import mummy/common, mummy/internal, std/atomics, std/base64, std/cpuinfo,
+    std/deques, std/hashes, std/nativesockets, std/os, std/parseutils,
+    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times, zippy
 
 when defined(linux):
   import posix
 
-  var SOCK_NONBLOCK* {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
+  let SOCK_NONBLOCK*
+    {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
 
 const useLockAndCond = (not defined(linux)) or defined(mummyUseLockAndCond)
 
@@ -167,13 +167,13 @@ proc hash*(websocket: WebSocket): Hash =
   return !$h
 
 template withLock(lock: var Atomic[bool], body: untyped): untyped =
-    # TAS
-    while lock.exchange(true, moAcquire): # Until we get the lock
-      discard
-    try:
-      body
-    finally:
-      lock.store(false, moRelease)
+  # TAS
+  while lock.exchange(true, moAcquire): # Until we get the lock
+    discard
+  try:
+    body
+  finally:
+    lock.store(false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
@@ -825,15 +825,19 @@ proc afterRecvHttp(
             rightStart = splitAt + 1
             rightLen = lineStart + lineLen - rightStart
 
-          while leftLen > 0 and handleData.recvBuffer[leftStart] in Whitespace:
+          while leftLen > 0 and
+            handleData.recvBuffer[leftStart] in Whitespace:
             inc leftStart
             dec leftLen
-          while leftLen > 0 and handleData.recvBuffer[leftStart + leftLen - 1] in Whitespace:
+          while leftLen > 0 and
+            handleData.recvBuffer[leftStart + leftLen - 1] in Whitespace:
             dec leftLen
-          while rightLen > 0 and handleData.recvBuffer[rightStart] in Whitespace:
+          while rightLen > 0 and
+            handleData.recvBuffer[rightStart] in Whitespace:
             inc rightStart
             dec rightLen
-          while leftLen > 0 and handleData.recvBuffer[rightStart + rightLen - 1] in Whitespace:
+          while leftLen > 0 and
+            handleData.recvBuffer[rightStart + rightLen - 1] in Whitespace:
             dec rightLen
 
           handleData.requestState.headers.add((
@@ -976,7 +980,8 @@ proc afterRecvHttp(
         handleData.recvBuffer.setLen(initialRecvBufferLen)
       else:
         # Copy the body out of the buffer
-        handleData.requestState.body.setLen(handleData.requestState.contentLength)
+        handleData.requestState.body.setLen(
+            handleData.requestState.contentLength)
         copyMem(
           handleData.requestState.body[0].addr,
           handleData.recvBuffer[0].addr,

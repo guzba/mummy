@@ -1,4 +1,4 @@
-import std/options, std/asyncdispatch, httpbeast, wrk_shared
+import httpbeast, std/asyncdispatch, std/options, wrk_shared
 
 proc onRequest(req: Request): Future[void] {.async.} =
   if req.httpMethod == some(HttpGet):
