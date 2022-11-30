@@ -19,6 +19,11 @@ proc handler(request: Request) =
       request.respond(200, headers, body)
     else:
       request.respond(405)
+  of "/raise":
+    if request.httpMethod == "GET":
+      raise newException(ValueError, "test")
+    else:
+      request.respond(405)
   else:
     request.respond(404)
 
@@ -50,6 +55,10 @@ proc requesterProc() =
     let response = client.request("http://localhost:8081/compressed")
     doAssert response.headers["Content-Encoding"] == "deflate"
     discard uncompress(response.body, dfDeflate)
+
+  block:
+    let client = newHttpClient()
+    doAssert client.get("http://localhost:8081/raise").status == "500"
 
   echo "Done, shut down the server"
   server.close()

@@ -54,6 +54,7 @@ type
     body*: string
     server: Server
     clientSocket: SocketHandle
+    responded: bool
 
   Request* = ptr RequestObj
 
@@ -245,105 +246,6 @@ proc trigger2(
     # Happens if SelectEvent has been closed
     discard
 
-proc workerProc(params: (Server, int)) =
-  ## The worker threads run the task queue here
-  let
-    server = params[0]
-    threadIdx = params[1]
-
-  proc runTask(task: WorkerTask) =
-    if task.request != nil:
-      try:
-        server.handler(task.request)
-      except:
-        # TODO: log?
-        echo getCurrentExceptionMsg()
-      `=destroy`(task.request[])
-      deallocShared(task.request)
-    else: # WebSocket
-      withLock server.websocketQueuesLock:
-        if server.websocketClaimed.getOrDefault(task.websocket, true):
-          # If this websocket has been claimed or if it is not present in
-          # the table (which indicates it has been closed), skip this task
-          return
-        # Claim this websocket
-        server.websocketClaimed[task.websocket] = true
-
-      while true: # Process the entire websocket queue
-        var update: WebSocketUpdate
-        withLock server.websocketQueuesLock:
-          try:
-            if server.websocketQueues[task.websocket].len > 0:
-              update = server.websocketQueues[task.websocket].popFirst()
-              if update.event == CloseEvent:
-                server.websocketQueues.del(task.websocket)
-                server.websocketClaimed.del(task.websocket)
-            else:
-              server.websocketClaimed[task.websocket] = false
-          except KeyError:
-            assert false # Notice this when not a release build
-
-        if update == nil:
-          break
-
-        try:
-          server.websocketHandler(
-            task.websocket,
-            update.event,
-            move update.message
-          )
-        except:
-          # TODO: log?
-          echo getCurrentExceptionMsg()
-
-        if update.event == CloseEvent:
-          break
-
-  when useLockAndCond:
-    while true:
-      acquire(server.taskQueueLock)
-
-      while server.taskQueue.len == 0 and
-        not server.destroyCalled.load(moRelaxed):
-        wait(server.taskQueueCond, server.taskQueueLock)
-
-      if server.destroyCalled.load(moRelaxed):
-        release(server.taskQueueLock)
-        return
-
-      let task = server.taskQueue.popFirst()
-      release(server.taskQueueLock)
-
-      runTask(task)
-  else:
-    var pollFds: array[2, TPollfd]
-    pollFds[0].fd = server.workerEventFds[threadIdx]
-    pollFds[0].events = POLLIN
-    pollFds[1].fd = server.destroyCalledFd
-    pollFds[1].events = POLLIN
-
-    while true:
-      if server.destroyCalled.load(moRelaxed):
-        break
-      var
-        task: WorkerTask
-        poppedTask: bool
-      withLock server.taskQueueLock:
-        if server.taskQueue.len > 0:
-          task = server.taskQueue.popFirst()
-          poppedTask = true
-      if poppedTask:
-        runTask(task)
-      else:
-        # Go to sleep if there are no tasks to run
-        discard poll(pollFds[0].addr, 2, -1)
-        if pollFds[0].revents != 0:
-          var data: uint64 = 0
-          let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
-          if ret != sizeof(uint64):
-            let err = osLastError()
-            raiseOSError(err)
-            # TODO: log?
 
 proc send*(
   websocket: WebSocket,
@@ -446,6 +348,8 @@ proc respond*(
     "websocket"
   )
 
+  request.responded = true
+
   withLock request.server.responseQueueLock:
     request.server.responseQueue.addLast(move encodedResponse)
 
@@ -494,6 +398,108 @@ proc upgradeToWebSocket*(
   headers["Sec-WebSocket-Accept"] = base64.encode(hash)
 
   request.respond(101, headers, "")
+
+proc workerProc(params: (Server, int)) =
+  ## The worker threads run the task queue here
+  let
+    server = params[0]
+    threadIdx = params[1]
+
+  proc runTask(task: WorkerTask) =
+    if task.request != nil:
+      try:
+        server.handler(task.request)
+      except:
+        if not task.request.responded:
+          task.request.respond(500)
+        # TODO: log?
+        echo getCurrentExceptionMsg()
+      `=destroy`(task.request[])
+      deallocShared(task.request)
+    else: # WebSocket
+      withLock server.websocketQueuesLock:
+        if server.websocketClaimed.getOrDefault(task.websocket, true):
+          # If this websocket has been claimed or if it is not present in
+          # the table (which indicates it has been closed), skip this task
+          return
+        # Claim this websocket
+        server.websocketClaimed[task.websocket] = true
+
+      while true: # Process the entire websocket queue
+        var update: WebSocketUpdate
+        withLock server.websocketQueuesLock:
+          try:
+            if server.websocketQueues[task.websocket].len > 0:
+              update = server.websocketQueues[task.websocket].popFirst()
+              if update.event == CloseEvent:
+                server.websocketQueues.del(task.websocket)
+                server.websocketClaimed.del(task.websocket)
+            else:
+              server.websocketClaimed[task.websocket] = false
+          except KeyError:
+            assert false # Notice this when not a release build
+
+        if update == nil:
+          break
+
+        try:
+          server.websocketHandler(
+            task.websocket,
+            update.event,
+            move update.message
+          )
+        except:
+          # TODO: log?
+          echo getCurrentExceptionMsg()
+
+        if update.event == CloseEvent:
+          break
+
+  when useLockAndCond:
+    while true:
+      acquire(server.taskQueueLock)
+
+      while server.taskQueue.len == 0 and
+        not server.destroyCalled.load(moRelaxed):
+        wait(server.taskQueueCond, server.taskQueueLock)
+
+      if server.destroyCalled.load(moRelaxed):
+        release(server.taskQueueLock)
+        return
+
+      let task = server.taskQueue.popFirst()
+      release(server.taskQueueLock)
+
+      runTask(task)
+  else:
+    var pollFds: array[2, TPollfd]
+    pollFds[0].fd = server.workerEventFds[threadIdx]
+    pollFds[0].events = POLLIN
+    pollFds[1].fd = server.destroyCalledFd
+    pollFds[1].events = POLLIN
+
+    while true:
+      if server.destroyCalled.load(moRelaxed):
+        break
+      var
+        task: WorkerTask
+        poppedTask: bool
+      withLock server.taskQueueLock:
+        if server.taskQueue.len > 0:
+          task = server.taskQueue.popFirst()
+          poppedTask = true
+      if poppedTask:
+        runTask(task)
+      else:
+        # Go to sleep if there are no tasks to run
+        discard poll(pollFds[0].addr, 2, -1)
+        if pollFds[0].revents != 0:
+          var data: uint64 = 0
+          let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
+          if ret != sizeof(uint64):
+            let err = osLastError()
+            raiseOSError(err)
+            # TODO: log?
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   when useLockAndCond:
