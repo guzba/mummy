@@ -1,10 +1,11 @@
-import mummy, wrk_shared
+import mummy, wrk_shared, os
 
 proc handler(request: Request) =
   case request.uri:
   of "/":
     if request.httpMethod == "GET":
       {.gcsafe.}:
+        # sleep(10)
         request.respond(200, body = responseBody)
     else:
       request.respond(405)

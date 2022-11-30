@@ -1,10 +1,11 @@
-import options, asyncdispatch, httpbeast, wrk_shared
+import std/options, std/asyncdispatch, httpbeast, wrk_shared
 
-proc onRequest(req: Request): Future[void] =
+proc onRequest(req: Request): Future[void] {.async.} =
   if req.httpMethod == some(HttpGet):
     case req.path.get()
     of "/":
       {.gcsafe.}:
+        # await sleepAsync(10)
         req.send(Http200, responseBody)
     else:
       req.send(Http404)
