@@ -1,3 +1,6 @@
+when not defined(mummyNoWorkers):
+  {.error: "Requires -d:mummyNoWorkers".}
+
 include mummy
 
 import std/random
@@ -10,6 +13,11 @@ proc randomWhitespace(): string =
   let len = rand(0 ..< 10)
   for i in 0 ..< len:
     result &= ' '
+
+proc randomAsciiString(): string =
+  let len = rand(0 ..< 20)
+  for i in 0 ..< len:
+    result &= rand(33 .. 126).char
 
 block:
   echo "Fuzzing headerContainsToken"
@@ -55,11 +63,6 @@ block:
 
 block:
   echo "Fuzzing afterRecvHttp"
-
-  proc randomAsciiString(): string =
-    let len = rand(0 ..< 20)
-    for i in 0 ..< len:
-      result &= rand(33 .. 126).char
 
   proc randomHeader(): string =
     let len = rand(0 ..< 10)
@@ -127,6 +130,7 @@ block:
         doAssert request.headers.len == numHeaders
         for i in 0 ..< numHeaders:
           doAssert headers[i] in request.headers
+      server.close()
 
   block:
     echo "Transfer-Encoding: chunked"
@@ -175,6 +179,7 @@ block:
           "Transfer-Encoding", "chunked"
         )
         doAssert request.body == body
+      server.close()
 
   block:
     echo "Content-Length"
@@ -225,9 +230,132 @@ block:
           clientSocket,
           handleData
         )
+        server.close()
 
-# block:
-#   echo "Fuzzing afterRecvWebSocket"
+block:
+  echo "Fuzzing afterRecvWebSocket"
 
-#   # Assemble 1 or more complete frames
-#   # Stitch together some continuation frames
+  proc handler(request: Request) =
+    discard
+
+  proc websocketHandler(
+    websocket: WebSocket,
+    event: WebSocketEvent,
+    message: Message
+  ) =
+    discard
+
+  block:
+    echo "Frame header"
+
+    var frameHeader = encodeFrameHeader(0x1, 0)
+    frameHeader[1] = (frameHeader[1].uint8 or 0b10000000).char # Set masking bit
+
+    for i in 0 ..< 1000:
+      let handleData = HandleData()
+
+      let
+        v0 = rand(0 ..< frameHeader.len)
+        v1 = rand(0 ..< 8)
+      var frame = frameHeader
+      frame[v0] = (frame[v0].uint8 xor (1.uint8 shl v1)).char
+      frame.add("    ") # Empty mask
+
+      handleData.recvBuffer.add(frame)
+
+      # Add some junk the end
+      handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+
+      handleData.bytesReceived = handleData.recvBuffer.len
+
+      let
+        server = newServer(handler, websocketHandler)
+        clientSocket = 1.SocketHandle
+        websocket = WebSocket(server: server, clientSocket: clientSocket)
+
+      server.websocketQueues[websocket] = initDeque[WebSocketUpdate]()
+      server.websocketClaimed[websocket] = false
+
+      let closingConnection = server.afterRecvWebSocket(
+          clientSocket,
+          handleData
+        )
+      if not closingConnection:
+        if server.taskQueue.len > 0:
+          let websocket = server.taskQueue.popFirst().websocket
+          doAssert websocket.server == server
+          doAssert websocket.clientSocket == clientSocket
+      server.close()
+
+  block:
+    echo "Continuations"
+
+    for i in 0 ..< 1:
+      let handleData = HandleData()
+
+      let
+        server = newServer(handler, websocketHandler)
+        clientSocket = 1.SocketHandle
+        websocket = WebSocket(server: server, clientSocket: clientSocket)
+
+      server.websocketQueues[websocket] = initDeque[WebSocketUpdate]()
+      server.websocketClaimed[websocket] = false
+
+      var combined: string
+
+      # 1 or more continuations
+      let numContinuations = rand(2 ..< 10)
+      for j in 0 ..< numContinuations:
+        var payload = randomAsciiString()
+
+        combined &= payload
+
+        let mask = [
+          rand(0 .. 255).uint8,
+          rand(0 .. 255).uint8,
+          rand(0 .. 255).uint8,
+          rand(0 .. 255).uint8
+        ]
+
+        # Mask the payload
+        for i in 0 ..< payload.len:
+          let j = i mod 4
+          payload[i] = (payload[i].uint8 xor mask[j]).char
+
+        var frame = encodeFrameHeader(
+          if j == 0: 0x1 else: 0x0,
+          payload.len
+        )
+        if j < numContinuations - 1:
+          frame[0] = (frame[0].uint8 and 0b01111111).char # Clear fin
+        frame[1] = (frame[1].uint8 or 0b10000000).char # Set masking bit
+        frame.add(mask[0].char)
+        frame.add(mask[1].char)
+        frame.add(mask[2].char)
+        frame.add(mask[3].char)
+        frame.add(payload)
+
+        handleData.recvBuffer.setLen(handleData.bytesReceived)
+
+        handleData.recvBuffer.add(frame)
+
+        handleData.bytesReceived = handleData.recvBuffer.len
+
+        let closingConnection = server.afterRecvWebSocket(
+            clientSocket,
+            handleData
+          )
+        if closingConnection:
+          doAssert false
+
+      # The initial frame + continuations have been received
+
+      let task = server.taskQueue.popFirst()
+
+      doAssert task.websocket == websocket
+
+      let update = server.websocketQueues[websocket].popFirst()
+
+      doAssert update.event == MessageEvent
+      doAssert update.message.kind == TextMessage
+      doAssert update.message.data == combined

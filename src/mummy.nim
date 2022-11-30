@@ -660,7 +660,8 @@ proc afterRecvWebSocket(
       handleData.bytesReceived -= frameLen
 
     if fin:
-      if handleData.frameState.opcode == 0:
+      let frameOpcode = handleData.frameState.opcode
+      if frameOpcode == 0:
         return true # Invalid frame, close the connection
 
       # We have a full message
@@ -671,7 +672,7 @@ proc afterRecvWebSocket(
 
       handleData.frameState = IncomingFrameState()
 
-      case opcode:
+      case frameOpcode:
       of 0x1: # Text
         message.kind = TextMessage
       of 0x2: # Binary
