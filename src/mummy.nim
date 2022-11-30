@@ -174,16 +174,6 @@ template withLock(lock: var Atomic[bool], body: untyped): untyped =
       body
     finally:
       lock.store(false, moRelease)
-    # # TTAS
-    # while true:
-    #   if not lock.exchange(true, moAcquire): # If we got the lock
-    #     break
-    #   while lock.load(moRelaxed): # While still locked
-    #     discard # pause()
-    # try:
-    #   body
-    # finally:
-    #   lock.store(false, moRelease)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
@@ -208,11 +198,6 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
           if matches:
             return true
         first = comma + 1
-      # Above does the same thing but without the allocations
-      # var parts = v.split(",")
-      # for part in parts.mitems:
-      #   if cmpIgnoreCase(part.strip(), token) == 0:
-      #     return true
 
 proc registerHandle2(
   selector: Selector[HandleData],
@@ -254,6 +239,8 @@ proc send*(
   data: sink string,
   kind = TextMessage,
 ) {.raises: [], gcsafe.} =
+  ## Enqueues the message to be sent over the WebSocket connection.
+
   var encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
 
@@ -275,6 +262,11 @@ proc send*(
   websocket.server.sendQueued.trigger2()
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
+  ## Begins the WebSocket closing handshake.
+  ## This does not discard previously queued messages before starting the
+  ## closing handshake.
+  ## The handshake will only begin after the queued messages are sent.
+
   var encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
@@ -291,6 +283,9 @@ proc respond*(
   headers: sink HttpHeaders = newSeq[(string, string)](),
   body: sink string = ""
 ) {.raises: [], gcsafe.} =
+  ## Sends the response for the request.
+  ## This should usually only be called once per request.
+
   var encodedResponse = OutgoingBuffer()
   encodedResponse.clientSocket = request.clientSocket
   encodedResponse.closeConnection =
@@ -360,6 +355,9 @@ proc respond*(
 proc upgradeToWebSocket*(
   request: Request
 ): WebSocket {.raises: [MummyError], gcsafe.} =
+  ## Upgrades the request to a WebSocket connection. You can immediately start
+  ## calling send().
+
   if not request.headers.headerContainsToken("Connection", "upgrade"):
     raise newException(
       MummyError,
@@ -402,7 +400,7 @@ proc upgradeToWebSocket*(
   request.respond(101, headers, "")
 
 proc workerProc(params: (Server, int)) =
-  ## The worker threads run the task queue here
+  # The worker threads run the task queue here
   let
     server = params[0]
     threadIdx = params[1]
@@ -1315,6 +1313,9 @@ proc loopForever(
         websocket.postWebSocketUpdate(close)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
+  ## Cleanly stops and deallocates the server.
+  ## In-flight request handler calls will be allowed to finish.
+  ## No additional handler calls will be dispatched even if they are queued.
   if server.socket.int != 0:
     server.shutdown.trigger2()
   else:
@@ -1325,6 +1326,12 @@ proc serve*(
   port: Port,
   address = "localhost"
 ) {.raises: [MummyError].} =
+  ## The server will serve on the address and port. The default address is
+  ## localhost. Use "0.0.0.0" to make the server externally accessible (with
+  ## caution).
+  ## This call does not return unless server.close() is called from another
+  ## thread.
+
   if server.socket.int != 0:
     raise newException(MummyError, "Server already has a socket")
 
@@ -1393,6 +1400,13 @@ proc newServer*(
   maxBodyLen = 1024 * 1024, # 1 MB
   maxMessageLen = 64 * 1024 # 64 KB
 ): Server {.raises: [MummyError].} =
+  ## Creates a new HTTP server. The request handler will be called for incoming
+  ## HTTP requests. The WebSocket handler will be called for WebSocket events.
+  ## Calls to the HTTP and WebSocket handlers are made from worker threads.
+  ## WebSocket events are dispatched serially per connection. This means your
+  ## WebSocket handler must return from an event before the next one will be
+  ## dispatched for the same connection.
+
   if handler == nil:
     raise newException(MummyError, "The request handler must not be nil")
 
