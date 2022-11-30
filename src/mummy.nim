@@ -317,7 +317,6 @@ proc respond*(
       except:
         # This should never happen since exceptions are only thrown if
         # the data format is invalid or the level is invalid
-        # TODO: log
         return
       headers["Content-Encoding"] = "gzip"
     elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
@@ -325,7 +324,6 @@ proc respond*(
         body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
       except:
         # See gzip
-        # TODO: log
         return
       headers["Content-Encoding"] = "deflate"
     else:
@@ -534,7 +532,6 @@ proc postWebSocketUpdate(
 
   withLock websocket.server.websocketQueuesLock:
     if websocket notin websocket.server.websocketQueues:
-      # TODO: log
       return
 
     try:
@@ -569,7 +566,6 @@ proc afterRecvWebSocket(
   if handleData.closeFrameQueuedAt > 0 and
     epochTime() - handleData.closeFrameQueuedAt > 10:
     # The Close frame dance didn't work out, just close the connection
-    # TODO: log
     return true
 
   # Try to parse entire frames out of the receive buffer
@@ -1144,7 +1140,6 @@ proc loopForever(
               for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
                 if clientHandleData.closeFrameQueuedAt > 0:
                   discard # Drop this message
-                  # TODO: log
                 else:
                   clientHandleData.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
@@ -1167,7 +1162,6 @@ proc loopForever(
           if clientHandleData.upgradedToWebSocket:
             if clientHandleData.closeFrameQueuedAt > 0:
               discard # Drop this message
-              # TODO: log
             else:
               clientHandleData.outgoingBuffers.addLast(encodedFrame)
               if encodedFrame.isCloseFrame:
