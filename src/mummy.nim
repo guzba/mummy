@@ -24,8 +24,7 @@ else:
         let err = osLastError()
         if err == OSErrorCode(EAGAIN):
           continue
-        # TODO: log?
-        echo osErrorMsg(err) & " (code: " & $err & ")"
+        # TODO: log? osErrorMsg(err) & " (code: " & $err & ")"
       break
 
 export Port, common
@@ -239,13 +238,16 @@ proc updateHandle2(
 proc trigger2(
   event: SelectEvent
 ) {.raises: [].} =
-  try:
-    event.trigger()
-  except:
-    # TODO: EAGAIN vs other, log
-    # Happens if SelectEvent has been closed
-    discard
-
+  while true:
+    try:
+      event.trigger()
+    except:
+      let err = osLastError()
+      when defined(linux):
+        if err == OSErrorCode(EAGAIN):
+          continue
+      # TODO: log? osErrorMsg(err) & " (code: " & $err & ")"
+    break
 
 proc send*(
   websocket: WebSocket,
@@ -320,7 +322,7 @@ proc respond*(
       except:
         # This should never happen since exceptions are only thrown if
         # the data format is invalid or the level is invalid
-        # TODO: log?
+        # TODO: log
         return
       headers["Content-Encoding"] = "gzip"
     elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
@@ -328,7 +330,7 @@ proc respond*(
         body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
       except:
         # See gzip
-        # TODO: log?
+        # TODO: log
         return
       headers["Content-Encoding"] = "deflate"
     else:
@@ -412,7 +414,7 @@ proc workerProc(params: (Server, int)) =
       except:
         if not task.request.responded:
           task.request.respond(500)
-        # TODO: log?
+        # TODO: log
         echo getCurrentExceptionMsg()
       `=destroy`(task.request[])
       deallocShared(task.request)
@@ -437,7 +439,7 @@ proc workerProc(params: (Server, int)) =
             else:
               server.websocketClaimed[task.websocket] = false
           except KeyError:
-            assert false # Notice this when not a release build
+            discard # Not possible
 
         if update == nil:
           break
@@ -449,7 +451,7 @@ proc workerProc(params: (Server, int)) =
             move update.message
           )
         except:
-          # TODO: log?
+          # TODO: log
           echo getCurrentExceptionMsg()
 
         if update.event == CloseEvent:
@@ -495,11 +497,14 @@ proc workerProc(params: (Server, int)) =
         discard poll(pollFds[0].addr, 2, -1)
         if pollFds[0].revents != 0:
           var data: uint64 = 0
-          let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
-          if ret != sizeof(uint64):
-            let err = osLastError()
-            raiseOSError(err)
-            # TODO: log?
+          while true:
+            let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
+            if ret != sizeof(uint64):
+              let err = osLastError()
+              if err == OSErrorCode(EAGAIN):
+                continue
+              # TODO: log
+            break
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   when useLockAndCond:
@@ -524,18 +529,22 @@ proc postWebSocketUpdate(
   update: WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
-    # TODO: log?
+    # TODO: log
     return
 
   var needsTask: bool
 
   withLock websocket.server.websocketQueuesLock:
+    if websocket notin websocket.server.websocketQueues:
+      # TODO: log
+      return
+
     try:
       websocket.server.websocketQueues[websocket].addLast(update)
       if not websocket.server.websocketClaimed[websocket]:
         needsTask = true
     except KeyError:
-      assert false # Notice this when not a release build
+      discard # Not possible
 
   if needsTask:
     websocket.server.postTask(WorkerTask(websocket: websocket))
@@ -562,7 +571,7 @@ proc afterRecvWebSocket(
   if handleData.closeFrameQueuedAt > 0 and
     epochTime() - handleData.closeFrameQueuedAt > 10:
     # The Close frame dance didn't work out, just close the connection
-    # TODO: log?
+    # TODO: log
     return true
 
   # Try to parse entire frames out of the receive buffer
@@ -615,6 +624,7 @@ proc afterRecvWebSocket(
       pos += 8
 
     if handleData.frameState.frameLen + payloadLen > server.maxMessageLen:
+      # TODO: log
       return true # Message is too large, close the connection
 
     if handleData.bytesReceived < pos + 4:
@@ -667,8 +677,6 @@ proc afterRecvWebSocket(
 
     if fin:
       let frameOpcode = handleData.frameState.opcode
-      if frameOpcode == 0:
-        return true # Invalid frame, close the connection
 
       # We have a full message
 
@@ -696,7 +704,7 @@ proc afterRecvWebSocket(
       of 0xA: # Pong
         message.kind = Pong
       else:
-        # TODO: log?
+        # TODO: log
         return true # Invalid opcode, close the connection
 
       let websocket = WebSocket(
@@ -741,6 +749,7 @@ proc afterRecvHttp(
     )
     if headersEnd < 0: # Headers end not found
       if handleData.bytesReceived > server.maxHeadersLen:
+        # TODO: log
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
@@ -919,6 +928,7 @@ proc afterRecvHttp(
         return true # Parsing chunk length failed, close the connection
 
       if handleData.requestState.contentLength + chunkLen > server.maxBodyLen:
+        # TODO: log
         return true # Body is too large, close the connection
 
       let chunkStart = chunkLenEnd + 2
@@ -955,6 +965,7 @@ proc afterRecvHttp(
         server.postTask(WorkerTask(request: request))
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
+      # TODO: log
       return true # Body is too large, close the connection
 
     if handleData.bytesReceived < handleData.requestState.contentLength:
@@ -1048,7 +1059,9 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       deinitLock(server.taskQueueLock)
       deinitCond(server.taskQueueCond)
     else:
-      discard
+      for workerEventFd in server.workerEventFds:
+        discard workerEventFd.close()
+      discard server.destroyCalledFd.close()
     try:
       server.responseQueued.close()
     except:
@@ -1126,14 +1139,14 @@ proc loopForever(
               # Why have we received bytes when we are upgrading the connection?
               needClosing.add(websocket.clientSocket)
               clientHandleData.sendsWaitingForUpgrade.setLen(0)
-              # TODO: log?
+              # TODO: log
               continue
             # Are there any sends that were waiting for this response?
             if clientHandleData.sendsWaitingForUpgrade.len > 0:
               for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
                 if clientHandleData.closeFrameQueuedAt > 0:
                   discard # Drop this message
-                  # TODO: log?
+                  # TODO: log
                 else:
                   clientHandleData.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
@@ -1156,7 +1169,7 @@ proc loopForever(
           if clientHandleData.upgradedToWebSocket:
             if clientHandleData.closeFrameQueuedAt > 0:
               discard # Drop this message
-              # TODO: log?
+              # TODO: log
             else:
               clientHandleData.outgoingBuffers.addLast(encodedFrame)
               if encodedFrame.isCloseFrame:
@@ -1169,7 +1182,7 @@ proc loopForever(
             # If we haven't, queue this to wait for the upgrade response
             clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
         else:
-          discard # TODO: log?
+          discard # TODO: log
 
     if shutdownTriggered:
       server.destroy(true)
@@ -1215,8 +1228,6 @@ proc loopForever(
           let handleData = HandleData()
           handleData.recvBuffer.setLen(initialRecvBufferLen)
           server.selector.registerHandle2(clientSocket, {Read}, handleData)
-        else:
-          assert false # Notice this when not a release build
       else: # Client socket
         if Error in readyKey.events:
           needClosing.add(readyKey.fd.SocketHandle)
@@ -1290,7 +1301,7 @@ proc loopForever(
         server.selector.unregister(clientSocket)
       except:
         # Leaks HandleData for this socket
-        # TODO: log?
+        # TODO: log
         discard
       finally:
         clientSocket.close()
