@@ -153,7 +153,7 @@ The exact commands for each server are:
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_mummy.nim`
 
-Requests/sec: 9,547.56 (very close to theoretical max of 10,000)
+Requests/sec: 9,547.56 (very close to theoretical max of 10,000 for the wrk cmd)
 
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_asynchttpserver.nim`
 
