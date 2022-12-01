@@ -1,7 +1,7 @@
 import mummy/common, mummy/internal, std/atomics, std/base64, std/cpuinfo,
     std/deques, std/hashes, std/nativesockets, std/os, std/parseutils,
     std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times, zippy,
-    mummy/loggers/echologger_asdf, mummy/loggers/filelogger
+    mummy/filelogger
 
 when defined(linux):
   import posix
@@ -17,7 +17,7 @@ else:
   proc eventfd(count: cuint, flags: cint): cint
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
-export Port, common, echologger_asdf, filelogger
+export Port, common, filelogger
 
 when not defined(gcArc) and not defined(gcOrc):
   {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
