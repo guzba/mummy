@@ -3,16 +3,19 @@ import mummy
 proc handler(request: Request) =
   case request.uri:
   of "/":
-    var headers: HttpHeaders
-    headers["Content-Type"] = "text/html"
-    request.respond(200, headers, """
-    <script>
-      var ws = new WebSocket("ws://localhost:8080/ws");
-      ws.onmessage = function (event) {
-        document.body.innerHTML = event.data;
-      };
-    </script>
-    """)
+    if request.httpMethod == "GET":
+      var headers: HttpHeaders
+      headers["Content-Type"] = "text/html"
+      request.respond(200, headers, """
+      <script>
+        var ws = new WebSocket("ws://localhost:8080/ws");
+        ws.onmessage = function (event) {
+          document.body.innerHTML = event.data;
+        };
+      </script>
+      """)
+    else:
+      request.respond(405)
   of "/ws":
     if request.httpMethod == "GET":
       let websocket = request.upgradeToWebSocket()
@@ -38,6 +41,6 @@ proc websocketHandler(
   of CloseEvent:
     discard
 
-let server = newServer(handler, websocketHandler)
+let server = newServer(handler, websocketHandler, logHandler = echoLogger)
 echo "Serving on http://localhost:8080"
 server.serve(Port(8080))

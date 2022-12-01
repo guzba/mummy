@@ -5,8 +5,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        nim-version: ['1.6.x']
+        os: [ubuntu-latest, windows-latest]
+        nim-version: ['1.6.8', '1.6.x']
 
     runs-on: ${{ matrix.os }}
 
@@ -18,4 +18,5 @@ jobs:
     - run: nimble install -y
     - run: nimble install -y ws
     - run: nim c -r tests/test.nim
+    - run: nim c -r tests/test_http.nim
     - run: nim c -r tests/test_websockets.nim
