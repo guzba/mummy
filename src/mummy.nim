@@ -415,7 +415,7 @@ proc upgradeToWebSocket*(
 
   request.respond(101, headers, "")
 
-proc workerProc(params: (Server, int)) =
+proc workerProc(params: (Server, int)) {.raises: [].} =
   # The worker threads run the task queue here
   let
     server = params[0]
