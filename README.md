@@ -135,7 +135,7 @@ I believe Mummy clears all three priorities:
 
 1) Mummy prioritizes efficiency in receiving and dispatching incoming requests and sending outgoing responses. This means things like avoiding unnecessary memory copying, ensuring the CPU spends all of its time in your handlers.
 
-2) Because Mummy uses mulitplexed IO just like async, Mummy is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. Additionally, while a single blocking or CPU heavy operation can stall an entire async server, this is not a problem for Mummy.
+2) Because Mummy uses multiplexed IO just like async, Mummy is not vulnerable to attacks like low-and-slow which traditionally multi-threaded servers are vulnerable to. Additionally, while a single blocking or CPU heavy operation can stall an entire async server, this is not a problem for Mummy.
 
 3) Request handlers with Mummy are just plain-old inline Nim code. They have a straightforward request-in-response-out API. Keeping things simple is great for maintenance, reliability and performance.
 
