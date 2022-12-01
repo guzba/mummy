@@ -6,7 +6,7 @@
 
 [API reference](https://nimdocs.com/guzba/mummy)
 
-Mummy is a multi-threaded HTTP and WebSocket server written entirely in Nim.
+Mummy is a multi-threaded HTTP 1.1 and WebSocket server written entirely in Nim.
 
 *A return to the ancient ways of threads.*
 
