@@ -180,6 +180,18 @@ Requests/sec: 99.83
 
 HttpBeast, Jester and Prologue all seem to suffer from the same substantial performance drop when using `await` in a handler (which is exactly what you'll be doing in an async server).
 
+### NodeJS
+
+`node tests/wrk_node.js`
+
+Requests/sec:   8,544.60
+
+### Go
+
+`go run tests/wrk_go.go`
+
+Requests/sec:   9,171.55
+
 ## Testing
 
 A fuzzer has been run against Mummy's socket reading and parsing code to ensure Mummy does not crash or otherwise misbehave on bad data from sockets. You can run the fuzzer any time by running `nim c -r tests/fuzz_recv.nim`.
