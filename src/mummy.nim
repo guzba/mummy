@@ -1,7 +1,7 @@
-import mummy/common, mummy/internal, std/atomics, std/base64, std/cpuinfo,
-    std/deques, std/hashes, std/nativesockets, std/os, std/parseutils,
-    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times, zippy,
-    mummy/filelogger
+import mummy/common, mummy/filelogger, mummy/internal, std/atomics, std/base64,
+    std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
+    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
+    std/times, zippy
 
 when defined(linux):
   import posix
