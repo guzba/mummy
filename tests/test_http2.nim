@@ -22,8 +22,14 @@ proc handler(request: Request) =
 
 let server = newServer(handler)
 
+const requesterThreadNum =
+  when defined(linux):
+    100
+  else:
+    10
+
 var
-  requesterThreads = newSeq[Thread[void]](100)
+  requesterThreads = newSeq[Thread[void]](requesterThreadNum)
   waitingThread: Thread[void]
 
 proc requesterProc() =
