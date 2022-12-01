@@ -11,6 +11,8 @@ proc handler(request: Request) =
   else:
     request.respond(404)
 
+var n: int
+
 proc websocketHandler(
   websocket: mummy.WebSocket,
   event: WebSocketEvent,
@@ -18,21 +20,30 @@ proc websocketHandler(
 ) =
   case event:
   of OpenEvent:
+    doAssert n == 0
+    n += 1
     websocket.send("Second")
   of MessageEvent:
     case message.kind:
     of TextMessage:
+      doAssert n == 1
+      n += 1
       doAssert message.data == "Third"
     of BinaryMessage:
-      doAssert false
+      doAssert n == 2
+      n += 1
+      doAssert message.data == "Fourth"
     of mummy.Ping:
-      doAssert false
+      doAssert n == 3
+      n += 1
+      doAssert message.data == ""
     of mummy.Pong:
       doAssert false
-    websocket.send("Fourth", BinaryMessage)
+    websocket.send("Fifth", BinaryMessage)
   of ErrorEvent:
     discard
   of CloseEvent:
+    doAssert n == 4
     echo "Closed websocket connection"
 
 let server = newServer(handler, websocketHandler)
@@ -46,7 +57,9 @@ proc requesterProc() =
   doAssert (waitFor websocket.receiveStrPacket()) == "First"
   doAssert (waitFor websocket.receiveStrPacket()) == "Second"
   waitFor websocket.send("Third")
-  doAssert (waitFor websocket.receiveBinaryPacket()) == cast[seq[byte]]("Fourth")
+  waitFor websocket.send("Fourth", Binary)
+  waitFor websocket.send("", Opcode.Ping)
+  doAssert (waitFor websocket.receiveBinaryPacket()) == cast[seq[byte]]("Fifth")
   websocket.close()
   websocket.hangUp()
   waitFor sleepAsync(100)
