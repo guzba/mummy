@@ -1469,6 +1469,3 @@ proc newServer*(
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
-
-proc server*(request: Request): Server {.inline.} =
-  request.server
