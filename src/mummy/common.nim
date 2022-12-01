@@ -8,6 +8,11 @@ type
 
   HttpHeaders* = seq[(string, string)]
 
+  LogLevel* = enum
+    DebugLevel, InfoLevel, ErrorLevel
+
+  LogHandler* = proc(level: LogLevel, args: varargs[string]) {.gcsafe.}
+
 proc contains*(headers: var HttpHeaders, key: string): bool =
   ## Checks if there is at least one header for the key. Not case sensitive.
   for (k, v) in headers:

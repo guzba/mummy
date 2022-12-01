@@ -41,6 +41,6 @@ proc websocketHandler(
   of CloseEvent:
     discard
 
-let server = newServer(handler, websocketHandler)
+let server = newServer(handler, websocketHandler, logHandler = echoLogger)
 echo "Serving on http://localhost:8080"
 server.serve(Port(8080))

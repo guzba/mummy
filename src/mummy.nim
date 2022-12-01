@@ -1,6 +1,7 @@
 import mummy/common, mummy/internal, std/atomics, std/base64, std/cpuinfo,
     std/deques, std/hashes, std/nativesockets, std/os, std/parseutils,
-    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times, zippy
+    std/selectors, std/sets, std/sha1, std/strutils, std/tables, std/times, zippy,
+    mummy/loggers/echologger_asdf, mummy/loggers/filelogger
 
 when defined(linux):
   import posix
@@ -16,18 +17,7 @@ else:
   proc eventfd(count: cuint, flags: cint): cint
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
-  proc trigger(efd: cint) {.raises: [].} =
-    var v: uint64 = 1
-    while true:
-      let ret = write(efd, v.addr, sizeof(uint64))
-      if ret != sizeof(uint64):
-        let err = osLastError()
-        if err == OSErrorCode(EAGAIN):
-          continue
-        # TODO: log? osErrorMsg(err) & " (code: " & $err & ")"
-      break
-
-export Port, common
+export Port, common, echologger_asdf, filelogger
 
 when not defined(gcArc) and not defined(gcOrc):
   {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
@@ -57,8 +47,6 @@ type
 
   Request* = ptr RequestObj
 
-  RequestHandler* = proc(request: Request) {.gcsafe.}
-
   WebSocket* = object
     server: Server
     clientSocket: SocketHandle
@@ -73,6 +61,8 @@ type
   MessageKind* = enum
     TextMessage, BinaryMessage, Ping, Pong
 
+  RequestHandler* = proc(request: Request) {.gcsafe.}
+
   WebSocketHandler* = proc(
     websocket: WebSocket,
     event: WebSocketEvent,
@@ -84,6 +74,7 @@ type
     address*: string
     handler: RequestHandler
     websocketHandler: WebSocketHandler
+    logHandler: LogHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
     workerThreads: seq[Thread[(Server, int)]]
     destroyCalled: Atomic[bool]
@@ -175,6 +166,14 @@ template withLock(lock: var Atomic[bool], body: untyped): untyped =
   finally:
     lock.store(false, moRelease)
 
+proc log(server: Server, level: LogLevel, args: varargs[string, `$`]) =
+  if server.logHandler == nil:
+    return
+  try:
+    server.logHandler(level, args)
+  except:
+    discard # ???
+
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   for (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
@@ -220,7 +219,8 @@ proc updateHandle2(
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
-proc trigger2(
+proc trigger(
+  server: Server,
   event: SelectEvent
 ) {.raises: [].} =
   while true:
@@ -231,8 +231,26 @@ proc trigger2(
       when defined(linux):
         if err == OSErrorCode(EAGAIN):
           continue
-      # TODO: log? osErrorMsg(err) & " (code: " & $err & ")"
+      server.log(
+        ErrorLevel,
+        "Error triggering event ", err, " ", osErrorMsg(err)
+      )
     break
+
+when not useLockAndCond:
+  proc trigger(server: Server, efd: cint) {.raises: [].} =
+    var v: uint64 = 1
+    while true:
+      let ret = write(efd, v.addr, sizeof(uint64))
+      if ret != sizeof(uint64):
+        let err = osLastError()
+        if err == OSErrorCode(EAGAIN):
+          continue
+        server.log(
+          ErrorLevel,
+          "Error writing to eventfd ", err, " ", osErrorMsg(err)
+        )
+      break
 
 proc send*(
   websocket: WebSocket,
@@ -259,7 +277,7 @@ proc send*(
   withLock websocket.server.sendQueueLock:
     websocket.server.sendQueue.addLast(move encodedFrame)
 
-  websocket.server.sendQueued.trigger2()
+  websocket.server.trigger(websocket.server.sendQueued)
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   ## Begins the WebSocket closing handshake.
@@ -275,7 +293,7 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   withLock websocket.server.sendQueueLock:
     websocket.server.sendQueue.addLast(move encodedFrame)
 
-  websocket.server.sendQueued.trigger2()
+  websocket.server.trigger(websocket.server.sendQueued)
 
 proc respond*(
   request: Request,
@@ -348,7 +366,7 @@ proc respond*(
   withLock request.server.responseQueueLock:
     request.server.responseQueue.addLast(move encodedResponse)
 
-  request.server.responseQueued.trigger2()
+  request.server.trigger(request.server.responseQueued)
 
 proc upgradeToWebSocket*(
   request: Request
@@ -517,7 +535,7 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
 
     if server.workersAwake < server.workerThreads.len:
       # Wake up a worker
-      server.workerEventFds[server.workersAwake].trigger()
+      server.trigger(server.workerEventFds[server.workersAwake])
       inc server.workersAwake
 
 proc postWebSocketUpdate(
@@ -1051,7 +1069,7 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
   when useLockAndCond:
     broadcast(server.taskQueueCond)
   else:
-    server.destroyCalledFd.trigger()
+    server.trigger(server.destroyCalledFd)
   if joinThreads:
     joinThreads(server.workerThreads)
     when useLockAndCond:
@@ -1316,7 +1334,7 @@ proc close*(server: Server) {.raises: [], gcsafe.} =
   ## In-flight request handler calls will be allowed to finish.
   ## No additional handler calls will be dispatched even if they are queued.
   if server.socket.int != 0:
-    server.shutdown.trigger2()
+    server.trigger(server.shutdown)
   else:
     server.destroy(true)
 
@@ -1394,6 +1412,7 @@ proc serve*(
 proc newServer*(
   handler: RequestHandler,
   websocketHandler: WebSocketHandler = nil,
+  logHandler: LogHandler = nil,
   workerThreads = max(countProcessors() - 1, 1) * 2,
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024, # 1 MB
@@ -1401,9 +1420,9 @@ proc newServer*(
 ): Server {.raises: [MummyError].} =
   ## Creates a new HTTP server. The request handler will be called for incoming
   ## HTTP requests. The WebSocket handler will be called for WebSocket events.
-  ## Calls to the HTTP and WebSocket handlers are made from worker threads.
+  ## Calls to the HTTP, WebSocket and log handlers are made from worker threads.
   ## WebSocket events are dispatched serially per connection. This means your
-  ## WebSocket handler must return from an event before the next one will be
+  ## WebSocket handler must return from a call before the next call will be
   ## dispatched for the same connection.
 
   if handler == nil:
@@ -1416,6 +1435,7 @@ proc newServer*(
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
+  result.logHandler = logHandler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
@@ -1446,3 +1466,6 @@ proc newServer*(
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
+
+proc server*(request: Request): Server {.inline.} =
+  request.server
