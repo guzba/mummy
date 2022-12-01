@@ -26,7 +26,7 @@ const requesterThreadNum =
   when defined(linux):
     100
   else:
-    10
+    3
 
 var
   requesterThreads = newSeq[Thread[void]](requesterThreadNum)
