@@ -11,25 +11,25 @@ proc newFileLogger*(filePath: string): FileLogger =
 proc log*(
   logger: FileLogger,
   level: LogLevel,
-  args: sink varargs[string, `$`]
+  args: varargs[string, `$`]
 ) {.gcsafe.} =
   echo "file logger not implemented yet"
 
 proc debug*(
   logger: FileLogger,
-  args: sink varargs[string, `$`]
+  args: varargs[string, `$`]
 ) {.inline, gcsafe.} =
   logger.log(DebugLevel, args)
 
 proc info*(
   logger: FileLogger,
-  args: sink varargs[string, `$`]
+  args: varargs[string, `$`]
 ) {.inline, gcsafe.} =
   logger.log(InfoLevel, args)
 
 proc error*(
   logger: FileLogger,
-  args: sink varargs[string, `$`]
+  args: varargs[string, `$`]
 ) {.inline, gcsafe.} =
   logger.log(ErrorLevel, args)
 

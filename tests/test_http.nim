@@ -21,7 +21,7 @@ proc handler(request: Request) =
       request.respond(405)
   of "/raise":
     if request.httpMethod == "GET":
-      raise newException(ValueError, "test")
+      raise newException(ValueError, "Expected /raise exception")
     else:
       request.respond(405)
   else:

@@ -166,7 +166,7 @@ template withLock(lock: var Atomic[bool], body: untyped): untyped =
   finally:
     lock.store(false, moRelease)
 
-proc log(server: Server, level: LogLevel, args: varargs[string, `$`]) =
+proc log(server: Server, level: LogLevel, args: varargs[string]) =
   if server.logHandler == nil:
     return
   try:
@@ -233,7 +233,7 @@ proc trigger(
           continue
       server.log(
         ErrorLevel,
-        "Error triggering event ", err, " ", osErrorMsg(err)
+        "Error triggering event ", $err, " ", osErrorMsg(err)
       )
     break
 
@@ -248,7 +248,7 @@ when not useLockAndCond:
           continue
         server.log(
           ErrorLevel,
-          "Error writing to eventfd ", err, " ", osErrorMsg(err)
+          "Error writing to eventfd ", $err, " ", osErrorMsg(err)
         )
       break
 
@@ -517,7 +517,10 @@ proc workerProc(params: (Server, int)) =
               let err = osLastError()
               if err == OSErrorCode(EAGAIN):
                 continue
-              # TODO: log
+              server.log(
+                ErrorLevel,
+                "Error reading eventfd ", $err, " ", osErrorMsg(err)
+              )
             break
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
@@ -543,7 +546,7 @@ proc postWebSocketUpdate(
   update: WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
-    # TODO: log
+    websocket.server.log(DebugLevel, "WebSocket event but no WebSocket handler")
     return
 
   var needsTask: bool
