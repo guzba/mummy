@@ -2,7 +2,7 @@ import ../common
 
 # This is an extremely simple example logger. Works well during development.
 
-proc echoLogger*(level: LogLevel, args: sink varargs[string, `$`]) =
+proc echoLogger*(level: LogLevel, args: sink varargs[string]) =
   var logLen = 0
   for arg in args:
     logLen += arg.len
