@@ -20,4 +20,4 @@ jobs:
     - run: nim c -r tests/test.nim
     - run: nim c -r tests/test_http.nim
     - run: nim c -r tests/test_websockets.nim
-    - run: nim c -r tests/fuzz_recv.nim
+    - run: nim c -r -d:mummyNoWorkers tests/fuzz_recv.nim
