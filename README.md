@@ -152,19 +152,24 @@ All benchmarks were tested by:
 The exact commands for each server are:
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_mummy.nim`
+
 Requests/sec:   9547.56
 
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_asynchttpserver.nim`
+
 Requests/sec:   7979.67)
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_httpbeast.nim`
+
 Requests/sec:     99.85
 
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_jester.nim`
 (--threads:on segfaults)
+
 Requests/sec:     99.82
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_prologue.nim`
+
 Requests/sec:     99.83
 
 HttpBeast, Jester and Prologue all seem to suffer from the same substantial performance drop when using `await` in a handler (which is exactly what you'll be doing in an async server).
