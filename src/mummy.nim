@@ -1442,7 +1442,7 @@ proc newServer*(
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
-  result.logHandler = logHandler
+  result.logHandler = if logHandler != nil: logHandler else: echoLogger
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
