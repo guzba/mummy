@@ -151,13 +151,19 @@ All benchmarks were tested by:
 
 The exact commands for each server are:
 
+### Mummy
+
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_mummy.nim`
 
 Requests/sec: 9,547.56 (very close to theoretical max of 10,000 for the wrk cmd run)
 
+### AsyncHttpServer
+
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_asynchttpserver.nim`
 
 Requests/sec: 7,979.67
+
+### HttpBeast, Jester, Prologue
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_httpbeast.nim`
 
