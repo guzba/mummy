@@ -178,7 +178,7 @@ Requests/sec: 99.82
 
 Requests/sec: 99.83
 
-HttpBeast, Jester and Prologue all seem to suffer from the same substantial performance drop when using `await` in a handler (which is exactly what you'll be doing in an async server).
+HttpBeast, Jester and Prologue all seem to suffer from what appears to be a bug affecting their performance. I have opened an [issue here](https://github.com/dom96/httpbeast/issues/84) to investigate.
 
 ### NodeJS
 
