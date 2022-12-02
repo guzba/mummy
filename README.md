@@ -85,6 +85,8 @@ let server = newServer(handler)
 server.serve(Port(8080))
 ```
 
+`nim c --threads:on --mm:orc -r examples/basic.nim`
+
 ## Example WebSocket server
 
 ```nim
@@ -116,6 +118,8 @@ proc websocketHandler(
 let server = newServer(handler, websocketHandler)
 server.serve(Port(8080))
 ```
+
+`nim c --threads:on --mm:orc -r examples/basic_websockets.nim`
 
 ## Performance
 
