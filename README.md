@@ -18,6 +18,8 @@ Mummy has been written specifically to maximize the performance of your server h
 
 ⚠️ Mummy is brand new so please exercise reasonable caution!
 
+Mummy requires `--threads:on` and `--mm:orc` or `--mm:arc`.
+
 ## How is Mummy different?
 
 Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. Your HTTP handlers probably won't even need to think about threads at all.
