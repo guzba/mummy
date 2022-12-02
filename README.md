@@ -187,7 +187,7 @@ Requests/sec: 9,692.81
 
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_prologue.nim`
 
-Requests/sec: 9749.22
+Requests/sec: 9,749.22
 
 ### NodeJS
 
