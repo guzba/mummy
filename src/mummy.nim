@@ -274,10 +274,13 @@ proc send*(
 
   encodedFrame.buffer2 = move data
 
+  var queueWasEmpty: bool
   withLock websocket.server.sendQueueLock:
+    queueWasEmpty = websocket.server.sendQueue.len == 0
     websocket.server.sendQueue.addLast(move encodedFrame)
 
-  websocket.server.trigger(websocket.server.sendQueued)
+  if queueWasEmpty:
+    websocket.server.trigger(websocket.server.sendQueued)
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   ## Begins the WebSocket closing handshake.
@@ -290,10 +293,13 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
+  var queueWasEmpty: bool
   withLock websocket.server.sendQueueLock:
+    queueWasEmpty = websocket.server.sendQueue.len == 0
     websocket.server.sendQueue.addLast(move encodedFrame)
 
-  websocket.server.trigger(websocket.server.sendQueued)
+  if queueWasEmpty:
+    websocket.server.trigger(websocket.server.sendQueued)
 
 proc respond*(
   request: Request,
@@ -332,18 +338,18 @@ proc respond*(
     if request.headers.headerContainsToken("Accept-Encoding", "gzip"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfGzip)
+        headers["Content-Encoding"] = "gzip"
       except:
         # This should never happen since exceptions are only thrown if
         # the data format is invalid or the level is invalid
-        return
-      headers["Content-Encoding"] = "gzip"
+        discard
     elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
+        headers["Content-Encoding"] = "deflate"
       except:
         # See gzip
-        return
-      headers["Content-Encoding"] = "deflate"
+        discard
     else:
       discard
 
@@ -363,10 +369,13 @@ proc respond*(
 
   request.responded = true
 
+  var queueWasEmpty: bool
   withLock request.server.responseQueueLock:
+    queueWasEmpty = request.server.responseQueue.len == 0
     request.server.responseQueue.addLast(move encodedResponse)
 
-  request.server.trigger(request.server.responseQueued)
+  if queueWasEmpty:
+    request.server.trigger(request.server.responseQueued)
 
 proc upgradeToWebSocket*(
   request: Request
@@ -722,14 +731,15 @@ proc afterRecvWebSocket(
         server.log(DebugLevel, "Dropped WebSocket, received invalid opcode")
         return true # Invalid opcode, close the connection
 
-      let websocket = WebSocket(
-        server: server,
-        clientSocket: clientSocket
-      )
-      var update = WebSocketUpdate(
-        event: MessageEvent,
-        message: move message
-      )
+      let
+        websocket = WebSocket(
+          server: server,
+          clientSocket: clientSocket
+        )
+        update = WebSocketUpdate(
+          event: MessageEvent,
+          message: move message
+        )
       websocket.postWebSocketUpdate(update)
 
 proc popRequest(
@@ -797,12 +807,13 @@ proc afterRecvHttp(
         if space1 == -1:
           return true # Invalid request line, close the connection
         handleData.requestState.httpMethod = handleData.recvBuffer[lineStart ..< space1]
-        var remainingLen = lineLen - (space1 + 1 - lineStart)
-        let space2 = handleData.recvBuffer.find(
-          ' ',
-          space1 + 1,
-          space1 + 1 + remainingLen - 1
-        )
+        let
+          remainingLen = lineLen - (space1 + 1 - lineStart)
+          space2 = handleData.recvBuffer.find(
+            ' ',
+            space1 + 1,
+            space1 + 1 + remainingLen - 1
+          )
         if space2 == -1:
           return true # Invalid request line, close the connection
         handleData.requestState.uri = handleData.recvBuffer[space1 + 1 ..< space2]
@@ -1048,8 +1059,7 @@ proc afterSend(
         server: server,
         clientSocket: clientSocket
       )
-      var update = WebSocketUpdate(event: OpenEvent)
-      websocket.postWebSocketUpdate(update)
+      websocket.postWebSocketUpdate(WebSocketUpdate(event: OpenEvent))
 
     if outgoingBuffer.isCloseFrame:
       handleData.closeFrameSent = true
@@ -1242,6 +1252,7 @@ proc loopForever(
             continue
 
           when not defined(linux):
+            # Not needed on linux where we can use SOCK_NONBLOCK
             clientSocket.setBlocking(false)
 
           server.clientSockets.incl(clientSocket)
