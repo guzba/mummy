@@ -4,9 +4,13 @@ import mummy/common, mummy/filelogger, mummy/internal, std/atomics, std/base64,
     std/times, zippy
 
 when defined(linux):
-  import posix
+  when defined(nimdoc):
+    # Why am I doing this?
+    from posix import write, TPollfd, POLLIN, poll, close, EAGAIN, O_CLOEXEC, O_NONBLOCK
+  else:
+    import posix
 
-  let SOCK_NONBLOCK*
+  let SOCK_NONBLOCK
     {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
 
 const useLockAndCond = (not defined(linux)) or defined(mummyUseLockAndCond)
@@ -35,7 +39,7 @@ let
   http11 = "HTTP/1.1"
 
 type
-  RequestObj = object
+  RequestObj* = object
     httpVersion*: HttpVersion
     httpMethod*: string
     uri*: string
@@ -1227,7 +1231,7 @@ proc loopForever(
       if readyKey.fd == server.socket.int:
         if Read in readyKey.events:
           let (clientSocket, _) =
-            when defined(linux):
+            when defined(linux) and not defined(nimdoc):
               var
                 sockAddr: SockAddr
                 addrLen = sizeof(sockAddr).SockLen
@@ -1431,7 +1435,7 @@ proc newServer*(
   handler: RequestHandler,
   websocketHandler: WebSocketHandler = nil,
   logHandler: LogHandler = nil,
-  workerThreads = max(countProcessors() - 1, 1) * 2,
+  workerThreads = max(countProcessors() * 10, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024, # 1 MB
   maxMessageLen = 64 * 1024 # 64 KB
