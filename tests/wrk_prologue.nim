@@ -2,7 +2,7 @@ import prologue, wrk_shared
 
 proc hello*(ctx: Context) {.async.} =
   {.gcsafe.}:
-    await sleepAsync(10)
+    await fdSleep()
     resp responseBody
 
 let app = newApp()

@@ -163,7 +163,7 @@ The exact commands for each server are:
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_mummy.nim`
 
-Requests/sec: 9,547.56 (very close to theoretical max of 10,000 for the wrk cmd run)
+Requests/sec: 9,547.56
 
 ### AsyncHttpServer
 
@@ -171,22 +171,24 @@ Requests/sec: 9,547.56 (very close to theoretical max of 10,000 for the wrk cmd 
 
 Requests/sec: 7,979.67
 
-### HttpBeast, Jester, Prologue
+### HttpBeast
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_httpbeast.nim`
 
-Requests/sec: 99.85
+Requests/sec: 9,862.00
+
+### Jester
 
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_jester.nim`
 (--threads:on segfaults)
 
-Requests/sec: 99.82
+Requests/sec: 9,692.81
+
+<!-- ### Prologue
 
 `nim c --mm:orc --threads:on -d:release -r tests/wrk_prologue.nim`
 
-Requests/sec: 99.83
-
-HttpBeast, Jester and Prologue all seem to suffer from what appears to be a bug affecting their performance. I have opened an [issue here](https://github.com/dom96/httpbeast/issues/84) to investigate.
+Requests/sec: -->
 
 ### NodeJS
 
