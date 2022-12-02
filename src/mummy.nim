@@ -1431,7 +1431,7 @@ proc newServer*(
   handler: RequestHandler,
   websocketHandler: WebSocketHandler = nil,
   logHandler: LogHandler = nil,
-  workerThreads = max(countProcessors() - 1, 1) * 2,
+  workerThreads = max(countProcessors() * 10, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024, # 1 MB
   maxMessageLen = 64 * 1024 # 64 KB
