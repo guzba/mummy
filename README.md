@@ -62,7 +62,7 @@ I see no reason why Websockets should not work exceptionally well right out of t
 
 Everything comes with trade-offs. Mummy is focused on being an exceptional API server. Think REST, JSON, RPC, WebSockets, HTML from templates etc.
 
-The property these share in common is they are all relatively memory-light. Most things are, which is great, but if you're specifically going to be serving a lot of very large files or expect large file uploads, Mummy is probably not the best choice.
+The property these share in common is they are all relatively memory-light. Most things are, which is great, but if you're specifically going to be serving a lot of very large files or expect large file uploads, Mummy is probably not the best choice unless your server has the RAM to handle the large files.
 
 Why is Mummy not great for large files? This is because Mummy dispatches fully received in-memory requests to worker threads and sends in-memory responses. This is great for everything except very large files.
 
