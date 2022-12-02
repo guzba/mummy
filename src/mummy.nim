@@ -10,7 +10,7 @@ when defined(linux):
   else:
     import posix
 
-  let SOCK_NONBLOCK*
+  let SOCK_NONBLOCK
     {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
 
 const useLockAndCond = (not defined(linux)) or defined(mummyUseLockAndCond)
