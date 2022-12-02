@@ -1,6 +1,6 @@
 version     = "0.1.0"
 author      = "Ryan Oldenburg"
-description = "Description of your library"
+description = "An HTTP and WebSocket server for Nim that returns to the ancient ways of threads"
 license     = "MIT"
 
 srcDir = "src"
