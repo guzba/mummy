@@ -4,7 +4,11 @@ import mummy/common, mummy/filelogger, mummy/internal, std/atomics, std/base64,
     std/times, zippy
 
 when defined(linux):
-  import posix
+  when defined(nimdoc):
+    # Why am I doing this?
+    from posix import write, TPollfd, POLLIN, poll, close, EAGAIN, O_CLOEXEC, O_NONBLOCK
+  else:
+    import posix
 
   let SOCK_NONBLOCK*
     {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
@@ -1227,7 +1231,7 @@ proc loopForever(
       if readyKey.fd == server.socket.int:
         if Read in readyKey.events:
           let (clientSocket, _) =
-            when defined(linux):
+            when defined(linux) and not defined(nimdoc):
               var
                 sockAddr: SockAddr
                 addrLen = sizeof(sockAddr).SockLen
