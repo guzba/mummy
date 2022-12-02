@@ -35,13 +35,13 @@ proc `[]=`*(headers: var HttpHeaders, key, value: string) =
       return
   headers.add((key, value))
 
-# This is an extremely simple logger. Works well during development.
-# Check out the file logging example in the examples/ dir for an upgrade.
 proc echoLogger*(level: LogLevel, args: varargs[string]) =
-  var logLen = 0
+  ## This is an extremely simple logger. Works well during development.
+  ## Check out the file logging example in the examples/ dir for an upgrade.
+  var lineLen = 0
   for arg in args:
-    logLen += arg.len
-  var log = newStringOfCap(logLen)
+    lineLen += arg.len
+  var line = newStringOfCap(lineLen)
   for arg in args:
-    log.add(arg)
-  echo log
+    line.add(arg)
+  echo line

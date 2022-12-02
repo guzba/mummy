@@ -6,4 +6,5 @@ settings:
 routes:
   get "/":
     {.gcsafe.}:
+      await sleepAsync(10)
       resp responseBody

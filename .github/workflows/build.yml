@@ -17,6 +17,9 @@ jobs:
         nim-version: ${{ matrix.nim-version }}
     - run: nimble install -y
     - run: nimble install -y ws
+    - run: nimble install -y jsony
     - run: nim c -r tests/test.nim
     - run: nim c -r tests/test_http.nim
+    - run: nim c -r tests/test_http2.nim
     - run: nim c -r tests/test_websockets.nim
+    - run: nim c -r -d:mummyNoWorkers tests/fuzz_recv.nim

@@ -12,6 +12,6 @@ proc handler(request: Request) =
   else:
     request.respond(404)
 
-let server = newServer(handler, logHandler = echoLogger)
+let server = newServer(handler)
 echo "Serving on http://localhost:8080"
 server.serve(Port(8080))

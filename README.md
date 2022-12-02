@@ -6,7 +6,7 @@
 
 [API reference](https://nimdocs.com/guzba/mummy)
 
-Mummy is a multi-threaded HTTP and WebSocket server written entirely in Nim.
+Mummy is a multi-threaded HTTP 1.1 and WebSocket server written entirely in Nim.
 
 *A return to the ancient ways of threads.*
 
@@ -140,6 +140,57 @@ I believe Mummy clears all three priorities:
 3) Request handlers with Mummy are just plain-old inline Nim code. They have a straightforward request-in-response-out API. Keeping things simple is great for maintenance, reliability and performance.
 
 ## Benchmarks
+
+Benchmarking was done on an Ubuntu 22.04 server with a 4 core / 8 thread CPU.
+
+The tests/wrk_ servers that are being benchmarked attempt to simulate requests that take ~10ms to complete.
+
+All benchmarks were tested by:
+
+`wrk -t10 -c100 -d10s http://localhost:8080`
+
+The exact commands for each server are:
+
+### Mummy
+
+`nim c --mm:orc --threads:on -d:release -r tests/wrk_mummy.nim`
+
+Requests/sec: 9,547.56 (very close to theoretical max of 10,000 for the wrk cmd run)
+
+### AsyncHttpServer
+
+`nim c --mm:orc --threads:off -d:release -r tests/wrk_asynchttpserver.nim`
+
+Requests/sec: 7,979.67
+
+### HttpBeast, Jester, Prologue
+
+`nim c --mm:orc --threads:on -d:release -r tests/wrk_httpbeast.nim`
+
+Requests/sec: 99.85
+
+`nim c --mm:orc --threads:off -d:release -r tests/wrk_jester.nim`
+(--threads:on segfaults)
+
+Requests/sec: 99.82
+
+`nim c --mm:orc --threads:on -d:release -r tests/wrk_prologue.nim`
+
+Requests/sec: 99.83
+
+HttpBeast, Jester and Prologue all seem to suffer from the same substantial performance drop when using `await` in a handler (which is exactly what you'll be doing in an async server).
+
+### NodeJS
+
+`node tests/wrk_node.js`
+
+Requests/sec:   8,544.60
+
+### Go
+
+`go run tests/wrk_go.go`
+
+Requests/sec:   9,171.55
 
 ## Testing
 

@@ -5,7 +5,7 @@ proc onRequest(req: Request): Future[void] {.async.} =
     case req.path.get()
     of "/":
       {.gcsafe.}:
-        # await sleepAsync(10)
+        await sleepAsync(10)
         req.send(Http200, responseBody)
     else:
       req.send(Http404)

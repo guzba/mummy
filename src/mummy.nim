@@ -415,7 +415,7 @@ proc upgradeToWebSocket*(
 
   request.respond(101, headers, "")
 
-proc workerProc(params: (Server, int)) =
+proc workerProc(params: (Server, int)) {.raises: [].} =
   # The worker threads run the task queue here
   let
     server = params[0]
@@ -428,8 +428,8 @@ proc workerProc(params: (Server, int)) =
       except:
         if not task.request.responded:
           task.request.respond(500)
-        # TODO: log
-        echo getCurrentExceptionMsg()
+        let e = getCurrentException()
+        server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
       `=destroy`(task.request[])
       deallocShared(task.request)
     else: # WebSocket
@@ -465,8 +465,8 @@ proc workerProc(params: (Server, int)) =
             move update.message
           )
         except:
-          # TODO: log
-          echo getCurrentExceptionMsg()
+          let e = getCurrentException()
+          server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
 
         if update.event == CloseEvent:
           break
@@ -639,7 +639,7 @@ proc afterRecvWebSocket(
       pos += 8
 
     if handleData.frameState.frameLen + payloadLen > server.maxMessageLen:
-      # TODO: log
+      server.log(DebugLevel, "Dropped WebSocket, message too long")
       return true # Message is too large, close the connection
 
     if handleData.bytesReceived < pos + 4:
@@ -719,7 +719,7 @@ proc afterRecvWebSocket(
       of 0xA: # Pong
         message.kind = Pong
       else:
-        # TODO: log
+        server.log(DebugLevel, "Dropped WebSocket, received invalid opcode")
         return true # Invalid opcode, close the connection
 
       let websocket = WebSocket(
@@ -764,7 +764,7 @@ proc afterRecvHttp(
     )
     if headersEnd < 0: # Headers end not found
       if handleData.bytesReceived > server.maxHeadersLen:
-        # TODO: log
+        server.log(DebugLevel, "Dropped connection, headers too long")
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
@@ -947,7 +947,7 @@ proc afterRecvHttp(
         return true # Parsing chunk length failed, close the connection
 
       if handleData.requestState.contentLength + chunkLen > server.maxBodyLen:
-        # TODO: log
+        server.log(DebugLevel, "Dropped connection, body too long")
         return true # Body is too large, close the connection
 
       let chunkStart = chunkLenEnd + 2
@@ -984,7 +984,7 @@ proc afterRecvHttp(
         server.postTask(WorkerTask(request: request))
   else:
     if handleData.requestState.contentLength > server.maxBodyLen:
-      # TODO: log
+      server.log(DebugLevel, "Dropped connection, body too long")
       return true # Body is too large, close the connection
 
     if handleData.bytesReceived < handleData.requestState.contentLength:
@@ -1159,7 +1159,10 @@ proc loopForever(
               # Why have we received bytes when we are upgrading the connection?
               needClosing.add(websocket.clientSocket)
               clientHandleData.sendsWaitingForUpgrade.setLen(0)
-              # TODO: log
+              server.log(
+                DebugLevel,
+                "Dropped WebSocket, received unexpected bytes after upgrade request"
+              )
               continue
             # Are there any sends that were waiting for this response?
             if clientHandleData.sendsWaitingForUpgrade.len > 0:
@@ -1172,7 +1175,7 @@ proc loopForever(
                     clientHandleData.closeFrameQueuedAt = epochTime()
               clientHandleData.sendsWaitingForUpgrade.setLen(0)
         else:
-          discard # TODO: log?
+          server.log(DebugLevel, "Dropped response to disconnected client")
 
     if sendQueuedTriggered:
       withLock server.sendQueueLock:
@@ -1200,7 +1203,7 @@ proc loopForever(
             # If we haven't, queue this to wait for the upgrade response
             clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
         else:
-          discard # TODO: log
+          server.log(DebugLevel, "Dropped message to disconnected client")
 
     if shutdownTriggered:
       server.destroy(true)
@@ -1319,8 +1322,7 @@ proc loopForever(
         server.selector.unregister(clientSocket)
       except:
         # Leaks HandleData for this socket
-        # TODO: log
-        discard
+        server.log(DebugLevel, "Error unregistering client socket")
       finally:
         clientSocket.close()
         server.clientSockets.excl(clientSocket)
@@ -1409,6 +1411,8 @@ proc serve*(
   try:
     server.loopForever(port)
   except:
+    let e = getCurrentException()
+    server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
     server.destroy(false)
     raise currentExceptionAsMummyError()
 
@@ -1438,7 +1442,7 @@ proc newServer*(
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
-  result.logHandler = logHandler
+  result.logHandler = if logHandler != nil: logHandler else: echoLogger
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
@@ -1469,6 +1473,3 @@ proc newServer*(
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
-
-proc server*(request: Request): Server {.inline.} =
-  request.server

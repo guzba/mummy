@@ -7,7 +7,7 @@ proc main {.async.} =
     if request.url.path == "/":
       if request.reqMethod == HttpGet:
         {.gcsafe.}:
-          # await sleepAsync(10)
+          await sleepAsync(10)
           await request.respond(Http200, responseBody)
 
   server.listen(Port(8080))
