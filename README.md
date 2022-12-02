@@ -180,15 +180,14 @@ Requests/sec: 9,862.00
 ### Jester
 
 `nim c --mm:orc --threads:off -d:release -r tests/wrk_jester.nim`
-(--threads:on segfaults)
 
 Requests/sec: 9,692.81
 
-<!-- ### Prologue
+### Prologue
 
-`nim c --mm:orc --threads:on -d:release -r tests/wrk_prologue.nim`
+`nim c --mm:orc --threads:off -d:release -r tests/wrk_prologue.nim`
 
-Requests/sec: -->
+Requests/sec: 9749.22
 
 ### NodeJS
 
