@@ -121,6 +121,8 @@ let server = newServer(handler, websocketHandler)
 server.serve(Port(8080))
 ```
 
+See the examples/ folder for more sample code, including an example WebSocket chat server.
+
 `nim c --threads:on --mm:orc -r examples/basic_websockets.nim`
 
 ## Performance
