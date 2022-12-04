@@ -1,3 +1,9 @@
+when not defined(gcArc) and not defined(gcOrc):
+  {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
+
+when not compileOption("threads"):
+  {.error: "Using --threads:on is required by Mummy.".}
+
 import mummy/common, mummy/filelogger, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
@@ -22,12 +28,6 @@ else:
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
 export Port, common, filelogger
-
-when not defined(gcArc) and not defined(gcOrc):
-  {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
-
-when not compileOption("threads"):
-  {.error: "Using --threads:on is required by Mummy.".}
 
 const
   listenBacklogLen = 128
