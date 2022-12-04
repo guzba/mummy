@@ -102,7 +102,6 @@ proc writerProc(logger: FileLogger) {.raises: [].} =
 
     exitLoop = logger.destroyCalled
 
-    logLines.setLen(0)
     while logger.queue.len > 0:
       logLines.add(logger.queue.popFirst)
 
@@ -116,6 +115,7 @@ proc writerProc(logger: FileLogger) {.raises: [].} =
           flushFile(logger.file)
       except:
         discard # What can we do?
+      logLines.setLen(0)
 
     if exitLoop:
       return
