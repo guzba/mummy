@@ -80,24 +80,24 @@ block:
     echo "Headers"
 
     for i in 0 ..< iterations:
-      let handleData = HandleData()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       # Add request line
       var
         httpMethod = randomAsciiString()
         uri = randomAsciiString()
-      handleData.recvBuffer.add(httpMethod)
-      handleData.recvBuffer.add(' ')
-      handleData.recvBuffer.add(uri)
-      handleData.recvBuffer.add(' ')
+      dataEntry.recvBuf.add(httpMethod)
+      dataEntry.recvBuf.add(' ')
+      dataEntry.recvBuf.add(uri)
+      dataEntry.recvBuf.add(' ')
       case rand(0 .. 2):
       of 0:
-        handleData.recvBuffer.add(http10)
+        dataEntry.recvBuf.add(http10)
       of 1:
-        handleData.recvBuffer.add(http11)
+        dataEntry.recvBuf.add(http11)
       else:
-        handleData.recvBuffer.add(randomAsciiString())
-      handleData.recvBuffer.add("\r\n")
+        dataEntry.recvBuf.add(randomAsciiString())
+      dataEntry.recvBuf.add("\r\n")
 
       # Add headers
       let numHeaders = rand(1 ..< 10)
@@ -105,22 +105,22 @@ block:
       for i in 0 ..< numHeaders:
         let header = randomHeader()
         headers.add(header)
-        handleData.recvBuffer.add(header)
-        handleData.recvBuffer.add(":")
-        handleData.recvBuffer.add(randomWhitespace())
-        handleData.recvBuffer.add(randomAsciiString())
-        handleData.recvBuffer.add(randomWhitespace())
-        handleData.recvBuffer.add("\r\n")
-      handleData.recvBuffer.add("\r\n")
+        dataEntry.recvBuf.add(header)
+        dataEntry.recvBuf.add(":")
+        dataEntry.recvBuf.add(randomWhitespace())
+        dataEntry.recvBuf.add(randomAsciiString())
+        dataEntry.recvBuf.add(randomWhitespace())
+        dataEntry.recvBuf.add("\r\n")
+      dataEntry.recvBuf.add("\r\n")
 
-      handleData.bytesReceived = handleData.recvBuffer.len
+      dataEntry.bytesReceived = dataEntry.recvBuf.len
 
       let
         server = newServer(handler)
         clientSocket = 1.SocketHandle
         closingConnection = server.afterRecvHttp(
           clientSocket,
-          handleData
+          dataEntry
         )
       if not closingConnection:
         let request = server.taskQueue.popFirst().request
@@ -135,11 +135,11 @@ block:
     echo "Transfer-Encoding: chunked"
 
     for i in 0 ..< iterations:
-      let handleData = HandleData()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
-      handleData.recvBuffer.add("GET / HTTP/1.1\r\n")
-      handleData.recvBuffer.add("Transfer-Encoding: chunked\r\n")
-      handleData.recvBuffer.add("\r\n")
+      dataEntry.recvBuf.add("GET / HTTP/1.1\r\n")
+      dataEntry.recvBuf.add("Transfer-Encoding: chunked\r\n")
+      dataEntry.recvBuf.add("\r\n")
 
       var body: string
       for i in 0 ..< rand(1 ..< 1000):
@@ -158,19 +158,19 @@ block:
         if chunkLen == 0:
           break
 
-      handleData.recvBuffer.add(encoded)
+      dataEntry.recvBuf.add(encoded)
 
       # Add some junk the end
-      handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+      dataEntry.recvBuf.setLen(dataEntry.recvBuf.len + rand(0 ..< 10))
 
-      handleData.bytesReceived = handleData.recvBuffer.len
+      dataEntry.bytesReceived = dataEntry.recvBuf.len
 
       let
         server = newServer(handler)
         clientSocket = 1.SocketHandle
         closingConnection = server.afterRecvHttp(
           clientSocket,
-          handleData
+          dataEntry
         )
       if not closingConnection:
         let request = server.taskQueue.popFirst().request
@@ -184,21 +184,21 @@ block:
     echo "Content-Length"
 
     for i in 0 ..< iterations:
-      let handleData = HandleData()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       var body: string
       for i in 0 ..< rand(1 ..< 1000):
         body &= randomAsciiString()
 
-      handleData.recvBuffer.add("GET / HTTP/1.1\r\n")
-      handleData.recvBuffer.add("Content-Length: " & $body.len & "\r\n")
-      handleData.recvBuffer.add("\r\n")
-      handleData.recvBuffer.add(body)
+      dataEntry.recvBuf.add("GET / HTTP/1.1\r\n")
+      dataEntry.recvBuf.add("Content-Length: " & $body.len & "\r\n")
+      dataEntry.recvBuf.add("\r\n")
+      dataEntry.recvBuf.add(body)
 
       # Add some junk the end
-      handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+      dataEntry.recvBuf.setLen(dataEntry.recvBuf.len + rand(0 ..< 10))
 
-      handleData.bytesReceived = handleData.recvBuffer.len
+      dataEntry.bytesReceived = dataEntry.recvBuf.len
 
       block:
         # Not truncated
@@ -207,7 +207,7 @@ block:
           clientSocket = 1.SocketHandle
           closingConnection = server.afterRecvHttp(
             clientSocket,
-            handleData
+            dataEntry
           )
         if not closingConnection:
           let request = server.taskQueue.popFirst().request
@@ -219,16 +219,16 @@ block:
 
       block:
         # Truncated
-        handleData.recvBuffer.setLen(rand(0 ..< handleData.recvBuffer.len))
+        dataEntry.recvBuf.setLen(rand(0 ..< dataEntry.recvBuf.len))
 
-        handleData.bytesReceived = handleData.recvBuffer.len
+        dataEntry.bytesReceived = dataEntry.recvBuf.len
 
         let
           server = newServer(handler)
           clientSocket = 1.SocketHandle
         discard server.afterRecvHttp(
           clientSocket,
-          handleData
+          dataEntry
         )
         server.close()
 
@@ -252,7 +252,7 @@ block:
     frameHeader[1] = (frameHeader[1].uint8 or 0b10000000).char # Set masking bit
 
     for i in 0 ..< 1000:
-      let handleData = HandleData()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       let
         v0 = rand(0 ..< frameHeader.len)
@@ -261,12 +261,12 @@ block:
       frame[v0] = (frame[v0].uint8 xor (1.uint8 shl v1)).char
       frame.add("    ") # Empty mask
 
-      handleData.recvBuffer.add(frame)
+      dataEntry.recvBuf.add(frame)
 
       # Add some junk the end
-      handleData.recvBuffer.setLen(handleData.recvBuffer.len + rand(0 ..< 10))
+      dataEntry.recvBuf.setLen(dataEntry.recvBuf.len + rand(0 ..< 10))
 
-      handleData.bytesReceived = handleData.recvBuffer.len
+      dataEntry.bytesReceived = dataEntry.recvBuf.len
 
       let
         server = newServer(handler, websocketHandler)
@@ -278,7 +278,7 @@ block:
 
       let closingConnection = server.afterRecvWebSocket(
           clientSocket,
-          handleData
+          dataEntry
         )
       if not closingConnection:
         if server.taskQueue.len > 0:
@@ -291,7 +291,7 @@ block:
     echo "Continuations"
 
     for i in 0 ..< iterations:
-      let handleData = HandleData()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       let
         server = newServer(handler, websocketHandler)
@@ -335,15 +335,15 @@ block:
         frame.add(mask[3].char)
         frame.add(payload)
 
-        handleData.recvBuffer.setLen(handleData.bytesReceived)
+        dataEntry.recvBuf.setLen(dataEntry.bytesReceived)
 
-        handleData.recvBuffer.add(frame)
+        dataEntry.recvBuf.add(frame)
 
-        handleData.bytesReceived = handleData.recvBuffer.len
+        dataEntry.bytesReceived = dataEntry.recvBuf.len
 
         let closingConnection = server.afterRecvWebSocket(
             clientSocket,
-            handleData
+            dataEntry
           )
         if closingConnection:
           doAssert false

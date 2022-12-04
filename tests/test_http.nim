@@ -1,5 +1,10 @@
 import httpclient, mummy, std/os, zippy
 
+const serveConfigs = [
+  ServeConfig(port: Port(8081)),
+  ServeConfig(port: Port(8082))
+]
+
 proc handler(request: Request) =
   case request.uri:
   of "/":
@@ -34,31 +39,42 @@ var requesterThread: Thread[void]
 proc requesterProc() =
   sleep(1000) # Give the server some time to start up
 
-  block:
-    let client = newHttpClient()
-    doAssert client.getContent("http://localhost:8081/") == "Hello, World!"
+  for config in serveConfigs:
+    block:
+      let client = newHttpClient()
+      doAssert client.getContent(
+        "http://localhost:" & $config.port.int & "/"
+      ) == "Hello, World!"
 
-  block:
-    let client = newHttpClient()
-    doAssert client.post("http://localhost:8081/", "").status == "405"
+    block:
+      let client = newHttpClient()
+      doAssert client.post(
+        "http://localhost:" & $config.port.int & "/", ""
+      ).status == "405"
 
-  block:
-    let client = newHttpClient()
-    client.headers = newHttpHeaders({"Accept-Encoding": "gzip"})
-    let response = client.request("http://localhost:8081/compressed")
-    doAssert response.headers["Content-Encoding"] == "gzip"
-    discard uncompress(response.body, dfGzip)
+    block:
+      let client = newHttpClient()
+      client.headers = newHttpHeaders({"Accept-Encoding": "gzip"})
+      let response = client.request(
+        "http://localhost:" & $config.port.int & "/compressed"
+      )
+      doAssert response.headers["Content-Encoding"] == "gzip"
+      discard uncompress(response.body, dfGzip)
 
-  block:
-    let client = newHttpClient()
-    client.headers = newHttpHeaders({"Accept-Encoding": "deflate"})
-    let response = client.request("http://localhost:8081/compressed")
-    doAssert response.headers["Content-Encoding"] == "deflate"
-    discard uncompress(response.body, dfDeflate)
+    block:
+      let client = newHttpClient()
+      client.headers = newHttpHeaders({"Accept-Encoding": "deflate"})
+      let response = client.request(
+        "http://localhost:" & $config.port.int & "/compressed"
+      )
+      doAssert response.headers["Content-Encoding"] == "deflate"
+      discard uncompress(response.body, dfDeflate)
 
-  block:
-    let client = newHttpClient()
-    doAssert client.get("http://localhost:8081/raise").status == "500"
+    block:
+      let client = newHttpClient()
+      doAssert client.get(
+        "http://localhost:" & $config.port.int & "/raise"
+      ).status == "500"
 
   echo "Done, shut down the server"
   server.close()
@@ -66,4 +82,4 @@ proc requesterProc() =
 createThread(requesterThread, requesterProc)
 
 # Start the server
-server.serve(Port(8081))
+server.serve(serveConfigs)
