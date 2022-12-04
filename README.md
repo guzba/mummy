@@ -26,7 +26,7 @@ The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
 
 Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. Your HTTP handlers probably won't even need to think about threads at all.
 
-This model has many great benefits and is ready to take advantage of continued server core count increases (AMD just announced a 96 core 192 thread sever CPU!).
+This model has many great benefits and is ready to take advantage of continued server core count increases (AMD just announced a 96 core 192 thread server CPU!).
 
 ## Why use Mummy instead of async?
 
