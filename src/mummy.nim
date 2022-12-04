@@ -39,7 +39,7 @@ let
   http11 = "HTTP/1.1"
 
 type
-  RequestObj* = object
+  RequestObj = object
     httpVersion*: HttpVersion
     httpMethod*: string
     uri*: string
