@@ -1102,6 +1102,10 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       server.sendQueued.close()
     except:
       discard # Ignore
+    try:
+      server.shutdown.close()
+    except:
+      discard # Ignore
     `=destroy`(server[])
     deallocShared(server)
   else:

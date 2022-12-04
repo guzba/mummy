@@ -290,7 +290,7 @@ block:
   block:
     echo "Continuations"
 
-    for i in 0 ..< 1:
+    for i in 0 ..< iterations:
       let handleData = HandleData()
 
       let
