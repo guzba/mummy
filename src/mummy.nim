@@ -1113,10 +1113,7 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     # The process is likely going to be exiting anyway
     discard
 
-proc loopForever(
-  server: Server,
-  port: Port
-) {.raises: [OSError, IOSelectorsException].} =
+proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
   var
     readyKeys: array[maxEventsPerSelectLoop, ReadyKey]
     receivedFrom, sentTo, needClosing: seq[SocketHandle]
@@ -1409,7 +1406,7 @@ proc serve*(
     raise currentExceptionAsMummyError()
 
   try:
-    server.loopForever(port)
+    server.loopForever()
   except:
     let e = getCurrentException()
     server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
