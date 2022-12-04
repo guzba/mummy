@@ -215,6 +215,7 @@ block:
             "Content-Length", $body.len
           )
           doAssert request.body == body
+        server.close
 
       block:
         # Truncated
@@ -289,7 +290,7 @@ block:
   block:
     echo "Continuations"
 
-    for i in 0 ..< 1:
+    for i in 0 ..< iterations:
       let handleData = HandleData()
 
       let
@@ -358,3 +359,5 @@ block:
       doAssert update.event == MessageEvent
       doAssert update.message.kind == TextMessage
       doAssert update.message.data == combined
+
+      server.close()
