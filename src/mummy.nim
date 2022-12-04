@@ -74,8 +74,6 @@ type
   ) {.gcsafe.}
 
   ServerObj = object
-    port*: Port
-    address*: string
     handler: RequestHandler
     websocketHandler: WebSocketHandler
     logHandler: LogHandler
@@ -1372,9 +1370,6 @@ proc serve*(
   if server.socket.int != 0:
     raise newException(MummyError, "Server already has a socket")
 
-  server.port = port
-  server.address = address
-
   try:
     server.socket = createNativeSocket(
       Domain.AF_INET,
@@ -1404,21 +1399,7 @@ proc serve*(
     if nativesockets.listen(server.socket, listenBacklogLen) < 0:
       raiseOSError(osLastError())
 
-    server.selector = newSelector[HandleData]()
-
     server.selector.registerHandle2(server.socket, {Read}, nil)
-
-    let responseQueuedData = HandleData()
-    responseQueuedData.forEvent = server.responseQueued
-    server.selector.registerEvent(server.responseQueued, responseQueuedData)
-
-    let sendQueuedData = HandleData()
-    sendQueuedData.forEvent = server.sendQueued
-    server.selector.registerEvent(server.sendQueued, sendQueuedData)
-
-    let shutdownData = HandleData()
-    shutdownData.forEvent = server.shutdown
-    server.selector.registerEvent(server.shutdown, shutdownData)
   except:
     server.destroy(true)
     raise currentExceptionAsMummyError()
@@ -1469,6 +1450,20 @@ proc newServer*(
     result.responseQueued = newSelectEvent()
     result.sendQueued = newSelectEvent()
     result.shutdown = newSelectEvent()
+
+    result.selector = newSelector[HandleData]()
+
+    let responseQueuedData = HandleData()
+    responseQueuedData.forEvent = result.responseQueued
+    result.selector.registerEvent(result.responseQueued, responseQueuedData)
+
+    let sendQueuedData = HandleData()
+    sendQueuedData.forEvent = result.sendQueued
+    result.selector.registerEvent(result.sendQueued, sendQueuedData)
+
+    let shutdownData = HandleData()
+    shutdownData.forEvent = result.shutdown
+    result.selector.registerEvent(result.shutdown, shutdownData)
 
     when useLockAndCond:
       initLock(result.taskQueueLock)
