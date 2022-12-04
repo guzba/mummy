@@ -215,6 +215,7 @@ block:
             "Content-Length", $body.len
           )
           doAssert request.body == body
+        server.close
 
       block:
         # Truncated
@@ -358,3 +359,5 @@ block:
       doAssert update.event == MessageEvent
       doAssert update.message.kind == TextMessage
       doAssert update.message.data == combined
+
+      server.close()
