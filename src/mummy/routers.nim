@@ -19,13 +19,14 @@ type
 
 proc addRoute*(
   router: var Router,
-  httpMethod, route: static string,
+  httpMethod, route: string | static string,
   handler: RequestHandler
 ) =
-  when route == "":
-    {.error: "Invalid empty route".}
-  when route[0] != '/':
-    {.error: "Routes must begin with /".}
+  when route is static string:
+    when route == "":
+      {.error: "Invalid empty route".}
+    when route[0] != '/':
+      {.error: "Routes must begin with /".}
 
   var parts = route.split('/')
   parts.delete(0)
@@ -49,25 +50,53 @@ proc addRoute*(
     handler: handler
   ))
 
-proc get*(router: var Router, route: static string, handler: RequestHandler) =
+proc get*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("GET", route, handler)
 
-proc head*(router: var Router, route: static string, handler: RequestHandler) =
+proc head*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("HEAD", route, handler)
 
-proc post*(router: var Router, route: static string, handler: RequestHandler) =
+proc post*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("POST", route, handler)
 
-proc put*(router: var Router, route: static string, handler: RequestHandler) =
+proc put*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("PUT", route, handler)
 
-proc delete*(router: var Router, route: static string, handler: RequestHandler) =
+proc delete*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("DELETE", route, handler)
 
-proc options*(router: var Router, route: static string, handler: RequestHandler) =
+proc options*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("OPTIONS", route, handler)
 
-proc patch*(router: var Router, route: static string, handler: RequestHandler) =
+proc patch*(
+  router: var Router,
+  route: string | static string,
+  handler: RequestHandler
+) =
   router.addRoute("PATCH", route, handler)
 
 proc defaultNotFoundHandler(request: Request) =
