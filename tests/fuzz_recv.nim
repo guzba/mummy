@@ -125,7 +125,10 @@ block:
       if not closingConnection:
         let request = server.taskQueue.popFirst().request
         doAssert request.httpMethod == httpMethod
-        doAssert request.uri == uri
+        if uri == "":
+          doAssert request.uri == "/"
+        else:
+          doAssert request.uri == uri
         doAssert request.headers.len == numHeaders
         for i in 0 ..< numHeaders:
           doAssert headers[i] in request.headers
