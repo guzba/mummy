@@ -30,16 +30,17 @@ proc addRoute*(
   var parts = route.split('/')
   parts.delete(0)
 
-  # Simplify all wildcard parts after **
   var i: int
   while i < parts.len:
     if parts[i] == "**":
       var j = i + 1
-      while j < parts.len:
-        if parts[j] == "*" or parts[j] == "**":
-          parts.delete(j)
-        else:
-          break
+      if j < parts.len and (parts[j] == "*" or parts[j] == "**"):
+        raise newException(
+          MummyError,
+          "Route ** followed by another * or ** is not supported"
+        )
+      else:
+        break
     inc i
 
   router.routes.add(Route(

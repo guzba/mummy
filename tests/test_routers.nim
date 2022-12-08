@@ -20,6 +20,9 @@ block:
   router.get("/partial/*", handler)
   router.get("/literal*", handler)
 
+  doAssertRaises MummyError:
+    router.get("/**/**", handler)
+
   let routerHandler = router.toHandler()
 
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
