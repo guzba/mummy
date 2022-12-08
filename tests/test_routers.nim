@@ -85,18 +85,18 @@ block:
   request.uri = "/partial/something"
   routerHandler(request)
 
-  request.uri = "/partial/more/here"
+  request.uri = "/partial/more/here?asdf=true"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
   request.uri = "/literal*"
   routerHandler(request)
 
-  request.uri = "/literal*asdf"
+  request.uri = "/literal*asdf&asdf"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/literalasdf"
+  request.uri = "/literalasdf#asdf"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -153,7 +153,7 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/"
+  request.uri = "/#asdf"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -218,7 +218,7 @@ block:
   request.uri = "/a/TEST/b/TEST2/page.html"
   routerHandler(request)
 
-  request.uri = "/TEST/page.html"
+  request.uri = "/TEST/page.html&3"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 

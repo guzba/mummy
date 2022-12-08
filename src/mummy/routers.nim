@@ -1,4 +1,4 @@
-import mummy, std/strutils, urlly
+import mummy, std/strutils
 
 type
   Router* = object
@@ -94,21 +94,42 @@ proc partialWildcardMatches(partialWildcard, test: string): bool =
     literalLen
   )
 
+proc pathParts(uri: string): seq[string] =
+  # The URI path is assumed to end at the first ? & #
+  var
+    a = uri.rfind('?')
+    b = uri.rfind('&')
+    c = uri.rfind('#')
+  var len = uri.len
+  if a != -1:
+    len = min(len, a)
+  if b != -1:
+    len = min(len, b)
+  if c != -1:
+    len = min(len, c)
+
+  if len != uri.len:
+    result = uri[0 ..< len].split('/')
+  else:
+    result = uri.split('/')
+
+  result.delete(0)
+
 converter toHandler*(router: Router): RequestHandler =
   return proc(request: Request) =
     try:
-      let url = parseUrl(request.uri)
+      let uriParts = request.uri.pathParts()
 
       var matchedSomeRoute: bool
       for route in router.routes:
-        if route.parts.len > url.paths.len:
+        if route.parts.len > uriParts.len:
           continue
 
         var
           i: int
           matchedRoute = true
           atLeastOneMultiWildcardMatch = false
-        for j, part in url.paths:
+        for j, part in uriParts:
           if i >= route.parts.len:
             matchedRoute = false
             break
@@ -126,7 +147,7 @@ converter toHandler*(router: Router): RequestHandler =
               if matchesNextLiteral:
                 i += 2
                 atLeastOneMultiWildcardMatch = false
-              elif j == url.paths.high:
+              elif j == uriParts.high:
                 matchedRoute = false
                 break
             else:

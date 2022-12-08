@@ -819,8 +819,6 @@ proc afterRecvHttp(
         if space2 == -1:
           return true # Invalid request line, close the connection
         handleData.requestState.uri = handleData.recvBuffer[space1 + 1 ..< space2]
-        if handleData.requestState.uri == "":
-          handleData.requestState.uri = "/"
         if handleData.recvBuffer.find(
           ' ',
           space2 + 1,
