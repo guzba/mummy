@@ -1,17 +1,22 @@
-import std/strutils
-
+import std/strutils, std/typetraits
 type
   MummyError* = object of CatchableError
 
   HttpVersion* = enum
     Http10, Http11
 
-  HttpHeaders* = seq[(string, string)]
+  HttpHeaders* = distinct seq[(string, string)]
 
   LogLevel* = enum
     DebugLevel, InfoLevel, ErrorLevel
 
   LogHandler* = proc(level: LogLevel, args: varargs[string]) {.gcsafe.}
+
+converter toBase*(headers: var HttpHeaders): var seq[(string, string)] =
+  headers.distinctBase
+
+converter toBase*(headers: HttpHeaders): seq[(string, string)] =
+  headers.distinctBase
 
 proc contains*(headers: var HttpHeaders, key: string): bool =
   ## Checks if there is at least one header for the key. Not case sensitive.
@@ -31,9 +36,12 @@ proc `[]=`*(headers: var HttpHeaders, key, value: string) =
   ## Not case sensitive.
   for i, (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
-      headers[i][1] = value
+      headers.toBase[i][1] = value
       return
   headers.add((key, value))
+
+proc emptyHttpHeaders*(): HttpHeaders =
+  discard
 
 proc echoLogger*(level: LogLevel, args: varargs[string]) =
   ## This is an extremely simple logger. Works well during development.
