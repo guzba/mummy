@@ -306,7 +306,7 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
 proc respond*(
   request: Request,
   statusCode: int,
-  headers: sink HttpHeaders = newSeq[(string, string)](),
+  headers: sink HttpHeaders = emptyHttpHeaders(),
   body: sink string = ""
 ) {.raises: [], gcsafe.} =
   ## Sends the response for the request.
