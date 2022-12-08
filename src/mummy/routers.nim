@@ -105,51 +105,42 @@ converter toHandler*(router: Router): RequestHandler =
           continue
 
         var
-          i, j: int
+          i: int
           matchedRoute = true
           atLeastOneMultiWildcardMatch = false
-        while true:
-          if j >= url.paths.len:
-            break
+        for j, part in url.paths:
           if i >= route.parts.len:
             matchedRoute = false
             break
 
           if route.parts[i] == "*": # Wildcard
             inc i
-            inc j
           elif route.parts[i] == "**": # Multi-part wildcard
             # Do we have a required next literal?
             if i + 1 < route.parts.len and atLeastOneMultiWildcardMatch:
               let matchesNextLiteral =
                 if route.parts[i + 1].startsWith('*'):
-                  partialWildcardMatches(route.parts[i + 1], url.paths[j])
+                  partialWildcardMatches(route.parts[i + 1], part)
                 else:
-                  url.paths[j] == route.parts[i + 1]
+                  part == route.parts[i + 1]
               if matchesNextLiteral:
-                inc i
-                # Do not inc j here, let the next literal get checked
+                i += 2
                 atLeastOneMultiWildcardMatch = false
               elif j == url.paths.high:
                 matchedRoute = false
                 break
-              else:
-                inc j
             else:
               atLeastOneMultiWildcardMatch = true
-              inc j
           elif route.parts[i].startsWith('*'): # Partial wildcard
-            if not partialWildcardMatches(route.parts[i], url.paths[j]):
+            if not partialWildcardMatches(route.parts[i], part):
               matchedRoute = false
               break
             inc i
-            inc j
           else: # Literal
-            if url.paths[j] != route.parts[i]:
+            if part != route.parts[i]:
               matchedRoute = false
               break
             inc i
-            inc j
 
         if matchedRoute:
           matchedSomeRoute = true
