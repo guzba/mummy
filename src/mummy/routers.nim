@@ -24,7 +24,7 @@ proc addRoute*(
   handler: RequestHandler
 ) =
   ## Adds a route to the router. Routes are a path string and an HTTP method.
-  ## When request comes in, it is tested against the routes in the order
+  ## When a request comes in, it is tested against the routes in the order
   ## they were added. The handler for the first matching route is called.
   ## The route path can have `*` and `**` wildcards.
   ## The `*` wildcard represents 0 or more characters, excluding `/`.
