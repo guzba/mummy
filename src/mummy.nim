@@ -4,7 +4,7 @@ when not defined(gcArc) and not defined(gcOrc):
 when not compileOption("threads"):
   {.error: "Using --threads:on is required by Mummy.".}
 
-import mummy/common, mummy/filelogger, mummy/internal, std/atomics, std/base64,
+import mummy/common, mummy/fileloggers, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
     std/times, zippy
@@ -27,7 +27,7 @@ else:
   proc eventfd(count: cuint, flags: cint): cint
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
-export Port, common, filelogger
+export Port, common, fileloggers
 
 const
   listenBacklogLen = 128
@@ -39,7 +39,7 @@ let
   http11 = "HTTP/1.1"
 
 type
-  RequestObj = object
+  RequestObj* = object
     httpVersion*: HttpVersion
     httpMethod*: string
     uri*: string
@@ -1484,3 +1484,6 @@ proc newServer*(
   except:
     result.destroy(true)
     raise currentExceptionAsMummyError()
+
+proc responded*(request: Request): bool =
+  request.responded
