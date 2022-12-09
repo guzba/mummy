@@ -86,7 +86,7 @@ echo "Serving on http://localhost:8080"
 server.serve(Port(8080))
 ```
 
-`nim c --threads:on --mm:orc -r examples/basic.nim`
+`nim c --threads:on --mm:orc -r examples/basic_router.nim`
 
 ## Example WebSocket server
 
