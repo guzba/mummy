@@ -1,4 +1,4 @@
-import mummy, std/locks, std/sets
+import mummy, mummy/routers, std/locks, std/sets
 
 ## This example shows a basic chat server over WebSocket.
 ##
@@ -17,44 +17,35 @@ var
 
 initLock(lock)
 
-proc handler(request: Request) =
-  case request.uri:
-  of "/":
-    if request.httpMethod == "GET":
-      var headers: HttpHeaders
-      headers["Content-Type"] = "text/html"
-      request.respond(200, headers, """
-      <!DOCTYPE html>
-      <script>
-        var ws = new WebSocket("ws://localhost:8080/chat")
-        ws.onmessage = function(event) {
-          var div = document.createElement('div')
-          div.textContent = event.data
-          document.body.appendChild(div)
-        }
-        ws.onerror = function(event) {
-          var div = document.createElement('div')
-          div.textContent = "! WebSocket error"
-          document.body.appendChild(div)
-        }
-        var send = function() {
-          ws.send(document.getElementById('msg').value)
-        }
-      </script>
-      <input id="msg" type="text">
-      <input type="button" onclick="send()" value="Send">
-      <div>Messages received:</div>
-      """)
-    else:
-      request.respond(405)
-  of "/chat":
-    if request.httpMethod == "GET":
-      let websocket = request.upgradeToWebSocket()
-      websocket.send("Hello from WebSocket server!")
-    else:
-      request.respond(405)
-  else:
-    request.respond(404)
+proc indexHandler(request: Request) =
+  var headers: HttpHeaders
+  headers["Content-Type"] = "text/html"
+  request.respond(200, headers, """
+  <!DOCTYPE html>
+  <script>
+    var ws = new WebSocket("ws://localhost:8080/chat")
+    ws.onmessage = function(event) {
+      var div = document.createElement('div')
+      div.textContent = event.data
+      document.body.appendChild(div)
+    }
+    ws.onerror = function(event) {
+      var div = document.createElement('div')
+      div.textContent = "! WebSocket error"
+      document.body.appendChild(div)
+    }
+    var send = function() {
+      ws.send(document.getElementById('msg').value)
+    }
+  </script>
+  <input id="msg" type="text">
+  <input type="button" onclick="send()" value="Send">
+  <div>Messages received:</div>
+  """)
+
+proc upgradeHandler(request: Request) =
+  let websocket = request.upgradeToWebSocket()
+  websocket.send("Hello from WebSocket server!")
 
 proc websocketHandler(
   websocket: WebSocket,
@@ -88,6 +79,10 @@ proc websocketHandler(
       withLock lock:
         clients.excl(websocket)
 
-let server = newServer(handler, websocketHandler)
+var router: Router
+router.get("/", indexHandler)
+router.get("/chat", upgradeHandler)
+
+let server = newServer(router, websocketHandler)
 echo "Serving on http://localhost:8080"
 server.serve(Port(8080))
