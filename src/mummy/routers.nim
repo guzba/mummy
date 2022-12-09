@@ -169,7 +169,7 @@ proc pathParts(uri: string): seq[string] =
 
   result.delete(0)
 
-converter toHandler*(router: Router): RequestHandler =
+proc toHandler*(router: Router): RequestHandler =
   return proc(request: Request) =
     try:
       let uriParts = request.uri.pathParts()
@@ -239,3 +239,6 @@ converter toHandler*(router: Router): RequestHandler =
         router.errorHandler(request, e)
       else:
         raise e
+
+converter convertToHandler*(router: Router): RequestHandler =
+  router.toHandler()
