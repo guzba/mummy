@@ -109,15 +109,44 @@ proc defaultMethodNotAllowedHandler(request: Request) =
   headers["Content-Type"] = "text/html"
   request.respond(405, headers, "<h1>Method Not Allowed</h1>")
 
-proc partialWildcardMatches(partialWildcard, test: string): bool =
-  let literalLen = partialWildcard.len - 1
+proc isPartialWildcard(test: string): bool {.inline.} =
+  test.len > 2 and test.startsWith('*') or test.endsWith('*')
+
+proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
+  let
+    wildcardPrefix = partialWildcard[0] == '*'
+    wildcardSuffix = partialWildcard[^1] == '*'
+
+  var
+    literalLen = partialWildcard.len
+    literalStart = 0
+  if wildcardPrefix:
+    dec literalLen
+    inc literalStart
+  if wildcardSuffix:
+    dec literalLen
+
   if literalLen > test.len:
     return false
-  equalMem(
-    partialWildcard[1].unsafeAddr,
-    test[test.len - literalLen].unsafeAddr,
-    literalLen
-  )
+
+  if wildcardPrefix and not wildcardSuffix:
+    return equalMem(
+      partialWildcard[1].unsafeAddr,
+      test[test.len - literalLen].unsafeAddr,
+      literalLen
+    )
+
+  if wildcardSuffix and not wildcardPrefix:
+    return equalMem(
+      partialWildcard[0].unsafeAddr,
+      test[0].unsafeAddr,
+      literalLen
+    )
+
+  # Wildcard prefix and suffix *<something>*
+
+  let literal = partialWildcard[1 .. ^2]
+  return literal in test
 
 proc pathParts(uri: string): seq[string] =
   # The URI path is assumed to end at the first ? & #
@@ -165,7 +194,7 @@ converter toHandler*(router: Router): RequestHandler =
             # Do we have a required next literal?
             if i + 1 < route.parts.len and atLeastOneMultiWildcardMatch:
               let matchesNextLiteral =
-                if route.parts[i + 1].startsWith('*'):
+                if route.parts[i + 1].isPartialWildcard():
                   partialWildcardMatches(route.parts[i + 1], part)
                 else:
                   part == route.parts[i + 1]
@@ -177,7 +206,7 @@ converter toHandler*(router: Router): RequestHandler =
                 break
             else:
               atLeastOneMultiWildcardMatch = true
-          elif route.parts[i].startsWith('*'): # Partial wildcard
+          elif route.parts[i].isPartialWildcard():
             if not partialWildcardMatches(route.parts[i], part):
               matchedRoute = false
               break

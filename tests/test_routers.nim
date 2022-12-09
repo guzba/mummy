@@ -19,6 +19,7 @@ block:
   router.get("/styles/*.css", handler)
   router.get("/partial/*", handler)
   router.get("/literal*", handler)
+  router.get("/*double*", handler)
 
   doAssertRaises MummyError:
     router.get("/**/**", handler)
@@ -96,10 +97,27 @@ block:
   routerHandler(request)
 
   request.uri = "/literal*asdf&asdf"
-  doAssertRaises AssertionDefect:
-    routerHandler(request)
+  routerHandler(request)
 
   request.uri = "/literalasdf#asdf"
+  routerHandler(request)
+
+  request.uri = "/adoubleb#asdf"
+  routerHandler(request)
+
+  request.uri = "/longerdoubleevenmore?a=b#asdf"
+  routerHandler(request)
+
+  request.uri = "/doubleb"
+  routerHandler(request)
+
+  request.uri = "/adouble"
+  routerHandler(request)
+
+  request.uri = "/double"
+  routerHandler(request)
+
+  request.uri = "/doubl"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
