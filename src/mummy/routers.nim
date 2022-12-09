@@ -109,11 +109,6 @@ proc defaultMethodNotAllowedHandler(request: Request) =
   headers["Content-Type"] = "text/html"
   request.respond(405, headers, "<h1>Method Not Allowed</h1>")
 
-proc defaultErrorHandler(request: Request) =
-  var headers: HttpHeaders
-  headers["Content-Type"] = "text/html"
-  request.respond(500, headers, "<h1>Internal Server Error</h1>")
-
 proc partialWildcardMatches(partialWildcard, test: string): bool =
   let literalLen = partialWildcard.len - 1
   if literalLen > test.len:
@@ -210,7 +205,8 @@ converter toHandler*(router: Router): RequestHandler =
         else:
           defaultNotFoundHandler(request)
     except:
+      let e = getCurrentException()
       if router.errorHandler != nil:
-        router.errorHandler(request, getCurrentException())
+        router.errorHandler(request, e)
       else:
-        defaultErrorHandler(request)
+        raise e
