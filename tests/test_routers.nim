@@ -42,6 +42,9 @@ block:
   request.uri = "/script.js"
   routerHandler(request)
 
+  request.uri = "/.js"
+  routerHandler(request)
+
   request.uri = "/script.j"
   doAssertRaises AssertionDefect:
     routerHandler(request)
