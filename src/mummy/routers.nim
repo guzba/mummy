@@ -2,6 +2,7 @@ import mummy, std/strutils
 
 type
   Router* = object
+    ## Routes HTTP requests. See `addRoute` for more info.
     notFoundHandler*: RequestHandler
       ## Called when no routes match the request URI
     methodNotAllowedHandler*: RequestHandler
@@ -22,6 +23,13 @@ proc addRoute*(
   httpMethod, route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route to the router. Routes are a path string and an HTTP method.
+  ## When request comes in, it is tested against the routes in the order
+  ## they were added. The handler for the first matching route is called.
+  ## The route path can have `*` and `**` wildcards.
+  ## The `*` wildcard represents 0 or more characters, excluding `/`.
+  ## The `**` wildcard represents 1 or more path elements delimited by `/`.
+
   when route is static string:
     when route == "":
       {.error: "Invalid empty route".}
@@ -55,6 +63,7 @@ proc get*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for GET requests. See `addRoute` for more info.
   router.addRoute("GET", route, handler)
 
 proc head*(
@@ -62,6 +71,7 @@ proc head*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for HEAD requests. See `addRoute` for more info.
   router.addRoute("HEAD", route, handler)
 
 proc post*(
@@ -69,6 +79,7 @@ proc post*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for POST requests. See `addRoute` for more info.
   router.addRoute("POST", route, handler)
 
 proc put*(
@@ -76,6 +87,7 @@ proc put*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for PUT requests. See `addRoute` for more info.
   router.addRoute("PUT", route, handler)
 
 proc delete*(
@@ -83,6 +95,7 @@ proc delete*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for DELETE requests. See `addRoute` for more info.
   router.addRoute("DELETE", route, handler)
 
 proc options*(
@@ -90,6 +103,7 @@ proc options*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for OPTIONS requests. See `addRoute` for more info.
   router.addRoute("OPTIONS", route, handler)
 
 proc patch*(
@@ -97,6 +111,7 @@ proc patch*(
   route: string | static string,
   handler: RequestHandler
 ) =
+  ## Adds a route for PATCH requests. See `addRoute` for more info.
   router.addRoute("PATCH", route, handler)
 
 proc defaultNotFoundHandler(request: Request) =
