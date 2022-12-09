@@ -65,7 +65,7 @@ proc websocketHandler(
   of OpenEvent:
     echo "Client connected"
     # When a new client connects, we add it to a set of connected clients.
-    # Mummy uses threads so we need get the lock lock for global memory
+    # Mummy uses threads so we need to lock the global memory
     # before we modify it.
     {.gcsafe.}:
       withLock lock:
