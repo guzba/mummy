@@ -10,3 +10,4 @@ nimcache
 *.ilk
 .*
 *.out
+*.sqlite3
