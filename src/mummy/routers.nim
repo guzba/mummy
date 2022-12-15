@@ -13,9 +13,9 @@ type
 
   RequestErrorHandler* = proc(request: Request, e: ref Exception) {.gcsafe.}
 
-  Route = object
-    httpMethod: string
-    parts: seq[string]
+  Route* = object
+    httpMethod*: string
+    parts*: seq[string]
     handler: RequestHandler
 
 proc addRoute*(
