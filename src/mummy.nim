@@ -7,7 +7,7 @@ when not compileOption("threads"):
 import mummy/common, mummy/fileloggers, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
-    std/times, zippy
+    std/times, zippy, webby/httpheaders
 
 when defined(linux):
   when defined(nimdoc):
@@ -27,7 +27,7 @@ else:
   proc eventfd(count: cuint, flags: cint): cint
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
-export Port, common, fileloggers
+export Port, common, fileloggers, httpheaders
 
 const
   listenBacklogLen = 128

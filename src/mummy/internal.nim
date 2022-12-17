@@ -1,4 +1,4 @@
-import common, std/nativesockets
+import common, std/nativesockets, webby/httpheaders
 
 template currentExceptionAsMummyError*(): untyped =
   let e = getCurrentException()
