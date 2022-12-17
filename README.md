@@ -143,7 +143,7 @@ Benchmarking HTTP servers is a bit like benchmarking running shoes.
 
 Certainly, there are some terrible shoes to run in (heels, clogs, etc), but once you're in a reasonable pair of shoes it is the runner that's going to matter, not the shoes.
 
-In this analogy, the runner is what your handers are actually doing and the shoes are the HTTP server choice.
+In this analogy, the runner is what your handlers are actually doing and the shoes are the HTTP server choice.
 
 With that in mind, I suggest three priorities:
 
