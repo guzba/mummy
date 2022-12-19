@@ -783,12 +783,6 @@ proc afterRecvHttp(
     # We have the headers, now to parse them
 
     var lineNum, lineStart: int
-    # Eat any null bytes before the request
-    while lineStart < headersEnd:
-      if handleData.recvBuffer[lineStart].uint8 == 0:
-        inc lineStart
-      else:
-        break
     while lineStart < headersEnd:
       var lineEnd = handleData.recvBuffer.find(
         "\r\n",
@@ -1018,6 +1012,7 @@ proc afterRecvHttp(
       if handleData.requestState.contentLength == handleData.bytesReceived:
         handleData.requestState.body = move handleData.recvBuffer
         handleData.recvBuffer.setLen(initialRecvBufferLen)
+        handleData.bytesReceived = 0
       else:
         # Copy the body out of the buffer
         handleData.requestState.body.setLen(
