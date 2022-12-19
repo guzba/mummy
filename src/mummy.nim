@@ -150,14 +150,14 @@ proc `$`*(request: Request): string =
     result &= "HTTP/1.0"
   result &= " (" & $cast[uint](request) & ")"
 
-proc `$`*(websocket: WebSocket): string =
-  "WebSocket " & $cast[uint](hash(websocket))
-
 proc hash*(websocket: WebSocket): Hash =
   var h: Hash
   h = h !& hash(websocket.server)
   h = h !& hash(websocket.clientSocket)
   return !$h
+
+proc `$`*(websocket: WebSocket): string =
+  "WebSocket " & $cast[uint](hash(websocket))
 
 template withLock(lock: var Atomic[bool], body: untyped): untyped =
   # TAS
@@ -783,6 +783,12 @@ proc afterRecvHttp(
     # We have the headers, now to parse them
 
     var lineNum, lineStart: int
+    # Eat any null bytes before the request
+    while lineStart < headersEnd:
+      if handleData.recvBuffer[lineStart].uint8 == 0:
+        inc lineStart
+      else:
+        break
     while lineStart < headersEnd:
       var lineEnd = handleData.recvBuffer.find(
         "\r\n",
