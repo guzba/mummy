@@ -22,6 +22,10 @@ Mummy requires `--threads:on` and `--mm:orc` or `--mm:arc`.
 
 The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
 
+## Sites using Mummy
+
+* [NimDocs.com](https://nimdocs.com) - view the [source code here](https://github.com/treeform/nimdocs/blob/master/src/nimdocs.nim)
+
 ## How is Mummy different?
 
 Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. Your HTTP handlers probably won't even need to think about threads at all.
