@@ -79,7 +79,7 @@ type
     logHandler: LogHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
     workerThreads: seq[Thread[(Server, int)]]
-    destroyCalled: Atomic[bool]
+    serving, destroyCalled: Atomic[bool]
     socket: SocketHandle
     selector: Selector[HandleData]
     responseQueued, sendQueued, shutdown: SelectEvent
@@ -1406,6 +1406,8 @@ proc serve*(
     server.destroy(true)
     raise currentExceptionAsMummyError()
 
+  server.serving.store(true, moRelaxed)
+
   try:
     server.loopForever()
   except:
@@ -1488,3 +1490,20 @@ proc newServer*(
 
 proc responded*(request: Request): bool =
   request.responded
+
+proc waitUntilReady*(server: Server, timeout: float) =
+  ## This proc blocks until the server is ready to receive requests or
+  ## the timeout has passed. The timeout is in floating point seconds.
+  ## This is useful when writing tests, where you need to know
+  ## the server is ready before you begin sending requests.
+  ## If the server is already ready this returns immediately.
+  let start = cpuTime()
+  while true:
+    if server.serving.load(moRelaxed):
+      return
+    let
+      now = cpuTime()
+      delta = now - start
+    if delta > timeout:
+      raise newException(MummyError, "Timeout while waiting for server")
+    sleep(100)

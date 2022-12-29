@@ -33,7 +33,7 @@ var
   waitingThread: Thread[void]
 
 proc requesterProc() =
-  sleep(1000) # Give the server some time to start up
+  server.waitUntilReady(5)
 
   for i in 0 ..< 10:
     let client = newHttpClient()
