@@ -32,7 +32,7 @@ let server = newServer(handler)
 var requesterThread: Thread[void]
 
 proc requesterProc() =
-  sleep(1000) # Give the server some time to start up
+  server.waitUntilReady(5)
 
   block:
     let client = newHttpClient()
