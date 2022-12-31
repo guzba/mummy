@@ -15,6 +15,7 @@ jobs:
     - uses: jiro4989/setup-nim-action@v1
       with:
         nim-version: ${{ matrix.nim-version }}
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
     - run: nimble install -y
     - run: nimble install -y ws
     - run: nimble install -y jsony

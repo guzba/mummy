@@ -51,7 +51,7 @@ let server = newServer(handler, websocketHandler)
 var requesterThread: Thread[void]
 
 proc requesterProc() =
-  server.waitUntilReady(5)
+  server.waitUntilReady()
 
   let websocket = waitFor newWebSocket("ws://127.0.0.1:8081")
   doAssert (waitFor websocket.receiveStrPacket()) == "First"

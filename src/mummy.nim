@@ -1491,7 +1491,7 @@ proc newServer*(
 proc responded*(request: Request): bool =
   request.responded
 
-proc waitUntilReady*(server: Server, timeout: float) =
+proc waitUntilReady*(server: Server, timeout: float = 10) =
   ## This proc blocks until the server is ready to receive requests or
   ## the timeout has passed. The timeout is in floating point seconds.
   ## This is useful when writing tests, where you need to know
