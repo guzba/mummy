@@ -115,7 +115,7 @@ type
     of ServerSocketEntry:
       discard
     of EventEntry:
-      forEvent: SelectEvent
+      event: SelectEvent
     of ClientSocketEntry:
       recvBuf: string
       bytesReceived: int
@@ -1142,11 +1142,11 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
       let readyKey = readyKeys[i]
       if User in readyKey.events:
         let eventDataEntry = server.selector.getData(readyKey.fd)
-        if eventDataEntry.forEvent == server.responseQueued:
+        if eventDataEntry.event == server.responseQueued:
           responseQueuedTriggered = true
-        if eventDataEntry.forEvent == server.sendQueued:
+        if eventDataEntry.event == server.sendQueued:
           sendQueuedTriggered = true
-        elif eventDataEntry.forEvent == server.shutdown:
+        elif eventDataEntry.event == server.shutdown:
           shutdownTriggered = true
         else:
           discard
@@ -1467,15 +1467,15 @@ proc newServer*(
     result.selector = newSelector[DataEntry]()
 
     let responseQueuedData = DataEntry(kind: EventEntry)
-    responseQueuedData.forEvent = result.responseQueued
+    responseQueuedData.event = result.responseQueued
     result.selector.registerEvent(result.responseQueued, responseQueuedData)
 
     let sendQueuedData = DataEntry(kind: EventEntry)
-    sendQueuedData.forEvent = result.sendQueued
+    sendQueuedData.event = result.sendQueued
     result.selector.registerEvent(result.sendQueued, sendQueuedData)
 
     let shutdownData = DataEntry(kind: EventEntry)
-    shutdownData.forEvent = result.shutdown
+    shutdownData.event = result.shutdown
     result.selector.registerEvent(result.shutdown, shutdownData)
 
     when useLockAndCond:
