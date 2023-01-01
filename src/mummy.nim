@@ -32,7 +32,7 @@ export Port, common, fileloggers, httpheaders
 const
   listenBacklogLen = 128
   maxEventsPerSelectLoop = 64
-  initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
+  initialRecvBufLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 let
   http10 = "HTTP/1.0"
@@ -1019,7 +1019,7 @@ proc afterRecvHttp(
       # the receive buffer
       if dataEntry.requestState.contentLength == dataEntry.bytesReceived:
         dataEntry.requestState.body = move dataEntry.recvBuf
-        dataEntry.recvBuf.setLen(initialRecvBufferLen)
+        dataEntry.recvBuf.setLen(initialRecvBufLen)
         dataEntry.bytesReceived = 0
       else:
         # Copy the body out of the buffer
@@ -1270,7 +1270,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           server.clientSockets.incl(clientSocket)
 
           let dataEntry = DataEntry(kind: ClientSocketEntry)
-          dataEntry.recvBuf.setLen(initialRecvBufferLen)
+          dataEntry.recvBuf.setLen(initialRecvBufLen)
           server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
       else: # Client socket
         if Error in readyKey.events:

@@ -80,7 +80,7 @@ block:
     echo "Headers"
 
     for i in 0 ..< iterations:
-      let dataEntry = DataEntry()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       # Add request line
       var
@@ -135,7 +135,7 @@ block:
     echo "Transfer-Encoding: chunked"
 
     for i in 0 ..< iterations:
-      let dataEntry = DataEntry()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       dataEntry.recvBuf.add("GET / HTTP/1.1\r\n")
       dataEntry.recvBuf.add("Transfer-Encoding: chunked\r\n")
@@ -184,7 +184,7 @@ block:
     echo "Content-Length"
 
     for i in 0 ..< iterations:
-      let dataEntry = DataEntry()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       var body: string
       for i in 0 ..< rand(1 ..< 1000):
@@ -252,7 +252,7 @@ block:
     frameHeader[1] = (frameHeader[1].uint8 or 0b10000000).char # Set masking bit
 
     for i in 0 ..< 1000:
-      let dataEntry = DataEntry()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       let
         v0 = rand(0 ..< frameHeader.len)
@@ -291,7 +291,7 @@ block:
     echo "Continuations"
 
     for i in 0 ..< iterations:
-      let dataEntry = DataEntry()
+      let dataEntry = DataEntry(kind: ClientSocketEntry)
 
       let
         server = newServer(handler, websocketHandler)
