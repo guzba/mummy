@@ -32,7 +32,7 @@ export Port, common, fileloggers, httpheaders
 const
   listenBacklogLen = 128
   maxEventsPerSelectLoop = 64
-  initialRecvBufferLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
+  initialRecvBufLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
 
 let
   http10 = "HTTP/1.0"
@@ -81,7 +81,7 @@ type
     workerThreads: seq[Thread[(Server, int)]]
     serving, destroyCalled: Atomic[bool]
     socket: SocketHandle
-    selector: Selector[HandleData]
+    selector: Selector[DataEntry]
     responseQueued, sendQueued, shutdown: SelectEvent
     clientSockets: HashSet[SocketHandle]
     when useLockAndCond:
@@ -107,16 +107,24 @@ type
     request: Request
     websocket: WebSocket
 
-  HandleData = ref object
-    forEvent: SelectEvent
-    recvBuffer: string
-    bytesReceived: int
-    requestState: IncomingRequestState
-    frameState: IncomingFrameState
-    outgoingBuffers: Deque[OutgoingBuffer]
-    closeFrameQueuedAt: float64
-    upgradedToWebSocket, closeFrameSent: bool
-    sendsWaitingForUpgrade: seq[OutgoingBuffer]
+  DataEntryKind = enum
+    ServerSocketEntry, ClientSocketEntry, EventEntry
+
+  DataEntry = ref object
+    case kind: DataEntryKind:
+    of ServerSocketEntry:
+      discard
+    of EventEntry:
+      event: SelectEvent
+    of ClientSocketEntry:
+      recvBuf: string
+      bytesReceived: int
+      requestState: IncomingRequestState
+      frameState: IncomingFrameState
+      outgoingBuffers: Deque[OutgoingBuffer]
+      closeFrameQueuedAt: float64
+      upgradedToWebSocket, closeFrameSent: bool
+      sendsWaitingForUpgrade: seq[OutgoingBuffer]
 
   IncomingRequestState = object
     headersParsed, chunked: bool
@@ -201,10 +209,10 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
         first = comma + 1
 
 proc registerHandle2(
-  selector: Selector[HandleData],
+  selector: Selector[DataEntry],
   socket: SocketHandle,
   events: set[Event],
-  data: HandleData
+  data: DataEntry
 ) {.raises: [IOSelectorsException].} =
   try:
     selector.registerHandle(socket, events, data)
@@ -212,7 +220,7 @@ proc registerHandle2(
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
 proc updateHandle2(
-  selector: Selector[HandleData],
+  selector: Selector[DataEntry],
   socket: SocketHandle,
   events: set[Event]
 ) {.raises: [IOSelectorsException].} =
@@ -579,35 +587,35 @@ proc postWebSocketUpdate(
 proc sendCloseFrame(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData,
+  dataEntry: DataEntry,
   closeConnection: bool
 ) {.raises: [IOSelectorsException].} =
   let outgoingBuffer = OutgoingBuffer()
   outgoingBuffer.buffer1 = encodeFrameHeader(0x8, 0)
   outgoingBuffer.isCloseFrame = true
   outgoingBuffer.closeConnection = closeConnection
-  handleData.outgoingBuffers.addLast(outgoingBuffer)
-  handleData.closeFrameQueuedAt = epochTime()
+  dataEntry.outgoingBuffers.addLast(outgoingBuffer)
+  dataEntry.closeFrameQueuedAt = epochTime()
   server.selector.updateHandle2(clientSocket, {Read, Write})
 
 proc afterRecvWebSocket(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  dataEntry: DataEntry
 ): bool {.raises: [IOSelectorsException].} =
-  if handleData.closeFrameQueuedAt > 0 and
-    epochTime() - handleData.closeFrameQueuedAt > 10:
+  if dataEntry.closeFrameQueuedAt > 0 and
+    epochTime() - dataEntry.closeFrameQueuedAt > 10:
     # The Close frame dance didn't work out, just close the connection
     return true
 
   # Try to parse entire frames out of the receive buffer
   while true:
-    if handleData.bytesReceived < 2:
+    if dataEntry.bytesReceived < 2:
       return false # Need to receive more bytes
 
     let
-      b0 = handleData.recvBuffer[0].uint8
-      b1 = handleData.recvBuffer[1].uint8
+      b0 = dataEntry.recvBuf[0].uint8
+      b1 = dataEntry.recvBuf[1].uint8
       fin = (b0 and 0b10000000) != 0
       rsv1 = b0 and 0b01000000
       rsv2 = b0 and 0b00100000
@@ -621,11 +629,11 @@ proc afterRecvWebSocket(
     if (b1 and 0b10000000) == 0:
       return true # Per spec, close the connection
 
-    if opcode == 0 and handleData.frameState.opcode == 0:
+    if opcode == 0 and dataEntry.frameState.opcode == 0:
       # Per spec, the first frame must have an opcode > 0
       return true # Close the connection
 
-    if handleData.frameState.opcode != 0 and opcode != 0:
+    if dataEntry.frameState.opcode != 0 and opcode != 0:
       # Per spec, if we have buffered fragments the opcode must be 0
       return true # Close the connection
 
@@ -635,82 +643,82 @@ proc afterRecvWebSocket(
     if payloadLen <= 125:
       discard
     elif payloadLen == 126:
-      if handleData.bytesReceived < 4:
+      if dataEntry.bytesReceived < 4:
         return false # Need to receive more bytes
       var l: uint16
-      copyMem(l.addr, handleData.recvBuffer[pos].addr, 2)
+      copyMem(l.addr, dataEntry.recvBuf[pos].addr, 2)
       payloadLen = nativesockets.htons(l).int
       pos += 2
     else:
-      if handleData.bytesReceived < 10:
+      if dataEntry.bytesReceived < 10:
         return false # Need to receive more bytes
       var l: uint32
-      copyMem(l.addr, handleData.recvBuffer[pos + 4].addr, 4)
+      copyMem(l.addr, dataEntry.recvBuf[pos + 4].addr, 4)
       payloadLen = nativesockets.htonl(l).int
       pos += 8
 
-    if handleData.frameState.frameLen + payloadLen > server.maxMessageLen:
+    if dataEntry.frameState.frameLen + payloadLen > server.maxMessageLen:
       server.log(DebugLevel, "Dropped WebSocket, message too long")
       return true # Message is too large, close the connection
 
-    if handleData.bytesReceived < pos + 4:
+    if dataEntry.bytesReceived < pos + 4:
       return false # Need to receive more bytes
 
     var mask: array[4, uint8]
-    copyMem(mask.addr, handleData.recvBuffer[pos].addr, 4)
+    copyMem(mask.addr, dataEntry.recvBuf[pos].addr, 4)
 
     pos += 4
 
-    if handleData.bytesReceived < pos + payloadLen:
+    if dataEntry.bytesReceived < pos + payloadLen:
       return false # Need to receive more bytes
 
     # Unmask the payload
     for i in 0 ..< payloadLen:
       let j = i mod 4
-      handleData.recvBuffer[pos + i] =
-        (handleData.recvBuffer[pos + i].uint8 xor mask[j]).char
+      dataEntry.recvBuf[pos + i] =
+        (dataEntry.recvBuf[pos + i].uint8 xor mask[j]).char
 
-    if handleData.frameState.opcode == 0:
+    if dataEntry.frameState.opcode == 0:
       # This is the first fragment
-      handleData.frameState.opcode = opcode
+      dataEntry.frameState.opcode = opcode
 
     # Make room in the message buffer for this fragment
-    let newFrameLen = handleData.frameState.frameLen + payloadLen
-    if handleData.frameState.buffer.len < newFrameLen:
-      let newBufferLen = max(handleData.frameState.buffer.len * 2, newFrameLen)
-      handleData.frameState.buffer.setLen(newBufferLen)
+    let newFrameLen = dataEntry.frameState.frameLen + payloadLen
+    if dataEntry.frameState.buffer.len < newFrameLen:
+      let newBufferLen = max(dataEntry.frameState.buffer.len * 2, newFrameLen)
+      dataEntry.frameState.buffer.setLen(newBufferLen)
 
     if payloadLen > 0:
       # Copy the fragment into the message buffer
       copyMem(
-        handleData.frameState.buffer[handleData.frameState.frameLen].addr,
-        handleData.recvBuffer[pos].addr,
+        dataEntry.frameState.buffer[dataEntry.frameState.frameLen].addr,
+        dataEntry.recvBuf[pos].addr,
         payloadLen
       )
-      handleData.frameState.frameLen += payloadLen
+      dataEntry.frameState.frameLen += payloadLen
 
     # Remove this frame from the receive buffer
     let frameLen = pos + payloadLen
-    if handleData.bytesReceived == frameLen:
-      handleData.bytesReceived = 0
+    if dataEntry.bytesReceived == frameLen:
+      dataEntry.bytesReceived = 0
     else:
       copyMem(
-        handleData.recvBuffer[0].addr,
-        handleData.recvBuffer[frameLen].addr,
-        handleData.bytesReceived - frameLen
+        dataEntry.recvBuf[0].addr,
+        dataEntry.recvBuf[frameLen].addr,
+        dataEntry.bytesReceived - frameLen
       )
-      handleData.bytesReceived -= frameLen
+      dataEntry.bytesReceived -= frameLen
 
     if fin:
-      let frameOpcode = handleData.frameState.opcode
+      let frameOpcode = dataEntry.frameState.opcode
 
       # We have a full message
 
       var message: Message
-      message.data = move handleData.frameState.buffer
-      message.data.setLen(handleData.frameState.frameLen)
+      message.data = move dataEntry.frameState.buffer
+      message.data.setLen(dataEntry.frameState.frameLen)
 
-      handleData.frameState = IncomingFrameState()
+      dataEntry.frameState = IncomingFrameState()
 
       case frameOpcode:
       of 0x1: # Text
@@ -720,10 +728,10 @@ proc afterRecvWebSocket(
       of 0x8: # Close
         # If we already queued a close, just close the connection
         # This is not quite perfect
-        if handleData.closeFrameQueuedAt > 0:
+        if dataEntry.closeFrameQueuedAt > 0:
           return true # Close the connection
         # Otherwise send a Close in response then close the connection
-        server.sendCloseFrame(clientSocket, handleData, true)
+        server.sendCloseFrame(clientSocket, dataEntry, true)
         continue
       of 0x9: # Ping
         message.kind = Ping
@@ -747,35 +755,35 @@ proc afterRecvWebSocket(
 proc popRequest(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  dataEntry: DataEntry
 ): Request {.raises: [].} =
   ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = cast[Request](allocShared0(sizeof(RequestObj)))
   result.server = server
   result.clientSocket = clientSocket
-  result.httpVersion = handleData.requestState.httpVersion
-  result.httpMethod = move handleData.requestState.httpMethod
-  result.uri = move handleData.requestState.uri
-  result.headers = move handleData.requestState.headers
-  result.body = move handleData.requestState.body
-  result.body.setLen(handleData.requestState.contentLength)
-  handleData.requestState = IncomingRequestState()
+  result.httpVersion = dataEntry.requestState.httpVersion
+  result.httpMethod = move dataEntry.requestState.httpMethod
+  result.uri = move dataEntry.requestState.uri
+  result.headers = move dataEntry.requestState.headers
+  result.body = move dataEntry.requestState.body
+  result.body.setLen(dataEntry.requestState.contentLength)
+  dataEntry.requestState = IncomingRequestState()
 
 proc afterRecvHttp(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  dataEntry: DataEntry
 ): bool {.raises: [].} =
   # Have we completed parsing the headers?
-  if not handleData.requestState.headersParsed:
+  if not dataEntry.requestState.headersParsed:
     # Not done with headers yet, look for the end of the headers
-    let headersEnd = handleData.recvBuffer.find(
+    let headersEnd = dataEntry.recvBuf.find(
       "\r\n\r\n",
       0,
-      min(handleData.bytesReceived, server.maxHeadersLen) - 1 # Inclusive
+      min(dataEntry.bytesReceived, server.maxHeadersLen) - 1 # Inclusive
     )
     if headersEnd < 0: # Headers end not found
-      if handleData.bytesReceived > server.maxHeadersLen:
+      if dataEntry.bytesReceived > server.maxHeadersLen:
         server.log(DebugLevel, "Dropped connection, headers too long")
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
@@ -784,7 +792,7 @@ proc afterRecvHttp(
 
     var lineNum, lineStart: int
     while lineStart < headersEnd:
-      var lineEnd = handleData.recvBuffer.find(
+      var lineEnd = dataEntry.recvBuf.find(
         "\r\n",
         lineStart,
         headersEnd
@@ -793,33 +801,33 @@ proc afterRecvHttp(
         lineEnd = headersEnd
 
       var lineLen = lineEnd - lineStart
-      while lineLen > 0 and handleData.recvBuffer[lineStart] in Whitespace:
+      while lineLen > 0 and dataEntry.recvBuf[lineStart] in Whitespace:
         inc lineStart
         dec lineLen
       while lineLen > 0 and
-        handleData.recvBuffer[lineStart + lineLen - 1] in Whitespace:
+        dataEntry.recvBuf[lineStart + lineLen - 1] in Whitespace:
         dec lineLen
 
       if lineNum == 0: # This is the request line
-        let space1 = handleData.recvBuffer.find(
+        let space1 = dataEntry.recvBuf.find(
           ' ',
           lineStart,
           lineStart + lineLen - 1
         )
         if space1 == -1:
           return true # Invalid request line, close the connection
-        handleData.requestState.httpMethod = handleData.recvBuffer[lineStart ..< space1]
+        dataEntry.requestState.httpMethod = dataEntry.recvBuf[lineStart ..< space1]
         let
           remainingLen = lineLen - (space1 + 1 - lineStart)
-          space2 = handleData.recvBuffer.find(
+          space2 = dataEntry.recvBuf.find(
             ' ',
             space1 + 1,
             space1 + 1 + remainingLen - 1
           )
         if space2 == -1:
           return true # Invalid request line, close the connection
-        handleData.requestState.uri = handleData.recvBuffer[space1 + 1 ..< space2]
-        if handleData.recvBuffer.find(
+        dataEntry.requestState.uri = dataEntry.recvBuf[space1 + 1 ..< space2]
+        if dataEntry.recvBuf.find(
           ' ',
           space2 + 1,
           lineStart + lineLen - 1
@@ -829,29 +837,29 @@ proc afterRecvHttp(
         if httpVersionLen != 8:
           return true # Invalid request line, close the connection
         if equalMem(
-          handleData.recvBuffer[space2 + 1].addr,
+          dataEntry.recvBuf[space2 + 1].addr,
           http11[0].unsafeAddr,
           8
         ):
-          handleData.requestState.httpVersion = Http11
+          dataEntry.requestState.httpVersion = Http11
         elif equalMem(
-          handleData.recvBuffer[space2 + 1].addr,
+          dataEntry.recvBuf[space2 + 1].addr,
           http10[0].unsafeAddr,
           8
         ):
-          handleData.requestState.httpVersion = Http10
+          dataEntry.requestState.httpVersion = Http10
         else:
           return true # Unsupported HTTP version, close the connection
       else: # This is a header
-        let splitAt = handleData.recvBuffer.find(
+        let splitAt = dataEntry.recvBuf.find(
           ':',
           lineStart,
           lineStart + lineLen - 1
         )
         if splitAt == -1:
           # Malformed header, include it for debugging purposes
-          var line = handleData.recvBuffer[lineStart ..< lineStart + lineLen]
-          handleData.requestState.headers.add((move line, ""))
+          var line = dataEntry.recvBuf[lineStart ..< lineStart + lineLen]
+          dataEntry.requestState.headers.add((move line, ""))
         else:
           var
             leftStart = lineStart
@@ -860,65 +868,65 @@ proc afterRecvHttp(
             rightLen = lineStart + lineLen - rightStart
 
           while leftLen > 0 and
-            handleData.recvBuffer[leftStart] in Whitespace:
+            dataEntry.recvBuf[leftStart] in Whitespace:
             inc leftStart
             dec leftLen
           while leftLen > 0 and
-            handleData.recvBuffer[leftStart + leftLen - 1] in Whitespace:
+            dataEntry.recvBuf[leftStart + leftLen - 1] in Whitespace:
             dec leftLen
           while rightLen > 0 and
-            handleData.recvBuffer[rightStart] in Whitespace:
+            dataEntry.recvBuf[rightStart] in Whitespace:
             inc rightStart
             dec rightLen
           while leftLen > 0 and
-            handleData.recvBuffer[rightStart + rightLen - 1] in Whitespace:
+            dataEntry.recvBuf[rightStart + rightLen - 1] in Whitespace:
             dec rightLen
 
-          handleData.requestState.headers.add((
-            handleData.recvBuffer[leftStart ..< leftStart + leftLen],
-            handleData.recvBuffer[rightStart ..< rightStart + rightLen]
+          dataEntry.requestState.headers.add((
+            dataEntry.recvBuf[leftStart ..< leftStart + leftLen],
+            dataEntry.recvBuf[rightStart ..< rightStart + rightLen]
           ))
 
       lineStart = lineEnd + 2
       inc lineNum
 
-    handleData.requestState.chunked =
-      handleData.requestState.headers.headerContainsToken(
+    dataEntry.requestState.chunked =
+      dataEntry.requestState.headers.headerContainsToken(
         "Transfer-Encoding", "chunked"
       )
 
     # If this is a chunked request ignore any Content-Length headers
-    if not handleData.requestState.chunked:
+    if not dataEntry.requestState.chunked:
       var foundContentLength: bool
-      for (k, v) in handleData.requestState.headers:
+      for (k, v) in dataEntry.requestState.headers:
         if cmpIgnoreCase(k, "Content-Length") == 0:
           if foundContentLength:
             # This is a second Content-Length header, not valid
             return true # Close the connection
           foundContentLength = true
           try:
-            handleData.requestState.contentLength = parseInt(v)
+            dataEntry.requestState.contentLength = parseInt(v)
           except:
             return true # Parsing Content-Length failed, close the connection
 
-      if handleData.requestState.contentLength < 0:
+      if dataEntry.requestState.contentLength < 0:
         return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
     # We do this so we can hopefully just move the receive buffer at the end
     # instead of always copying a potentially huge body
     let bodyStart = headersEnd + 4
-    if handleData.bytesReceived == bodyStart:
-      handleData.bytesReceived = 0
+    if dataEntry.bytesReceived == bodyStart:
+      dataEntry.bytesReceived = 0
     else:
       # This could be optimized away by having [0] be [head] where head can move
       # without having to copy the headers out
       copyMem(
-        handleData.recvBuffer[0].addr,
-        handleData.recvBuffer[bodyStart].addr,
-        handleData.bytesReceived - bodyStart
+        dataEntry.recvBuf[0].addr,
+        dataEntry.recvBuf[bodyStart].addr,
+        dataEntry.bytesReceived - bodyStart
       )
-      handleData.bytesReceived -= bodyStart
+      dataEntry.bytesReceived -= bodyStart
 
     # One of three possible states for request body:
     # 1) We received a Content-Length header, so we know the content length
@@ -926,24 +934,24 @@ proc afterRecvHttp(
     # 3) Neither, so we assume a content length of 0
 
     # Mark that headers have been parsed, must end this block
-    handleData.requestState.headersParsed = true
+    dataEntry.requestState.headersParsed = true
 
   # Headers have been parsed, now for the body
 
-  if handleData.requestState.chunked: # Chunked request
+  if dataEntry.requestState.chunked: # Chunked request
     # Process as many chunks as we have
     while true:
-      if handleData.bytesReceived < 3:
+      if dataEntry.bytesReceived < 3:
         return false # Need to receive more bytes
 
       # Look for the end of the chunk length
-      let chunkLenEnd = handleData.recvBuffer.find(
+      let chunkLenEnd = dataEntry.recvBuf.find(
         "\r\n",
         0,
-        min(handleData.bytesReceived - 1, 19) # Inclusive with a reasonable max
+        min(dataEntry.bytesReceived - 1, 19) # Inclusive with a reasonable max
       )
       if chunkLenEnd < 0: # Chunk length end not found
-        if handleData.bytesReceived > 19:
+        if dataEntry.bytesReceived > 19:
           return true # We should have found it, close the connection
         return false # Try again after receiving more bytes
 
@@ -951,7 +959,7 @@ proc afterRecvHttp(
       var chunkLen: int
       try:
         discard parseHex(
-          handleData.recvBuffer,
+          dataEntry.recvBuf,
           chunkLen,
           0,
           chunkLenEnd
@@ -959,104 +967,104 @@ proc afterRecvHttp(
       except:
         return true # Parsing chunk length failed, close the connection
 
-      if handleData.requestState.contentLength + chunkLen > server.maxBodyLen:
+      if dataEntry.requestState.contentLength + chunkLen > server.maxBodyLen:
         server.log(DebugLevel, "Dropped connection, body too long")
         return true # Body is too large, close the connection
 
       let chunkStart = chunkLenEnd + 2
-      if handleData.bytesReceived < chunkStart + chunkLen + 2:
+      if dataEntry.bytesReceived < chunkStart + chunkLen + 2:
         return false # Need to receive more bytes
 
       # Make room in the body buffer for this chunk
-      let newContentLength = handleData.requestState.contentLength + chunkLen
-      if handleData.requestState.body.len < newContentLength:
-        let newLen = max(handleData.requestState.body.len * 2, newContentLength)
-        handleData.requestState.body.setLen(newLen)
+      let newContentLength = dataEntry.requestState.contentLength + chunkLen
+      if dataEntry.requestState.body.len < newContentLength:
+        let newLen = max(dataEntry.requestState.body.len * 2, newContentLength)
+        dataEntry.requestState.body.setLen(newLen)
 
       if chunkLen > 0:
         copyMem(
-          handleData.requestState.body[handleData.requestState.contentLength].addr,
-          handleData.recvBuffer[chunkStart].addr,
+          dataEntry.requestState.body[dataEntry.requestState.contentLength].addr,
+          dataEntry.recvBuf[chunkStart].addr,
           chunkLen
         )
-        handleData.requestState.contentLength += chunkLen
+        dataEntry.requestState.contentLength += chunkLen
 
       # Remove this chunk from the receive buffer
       let
         nextChunkStart = chunkLenEnd + 2 + chunkLen + 2
-        bytesRemaining = handleData.bytesReceived - nextChunkStart
+        bytesRemaining = dataEntry.bytesReceived - nextChunkStart
       copyMem(
-        handleData.recvBuffer[0].addr,
-        handleData.recvBuffer[nextChunkStart].addr,
+        dataEntry.recvBuf[0].addr,
+        dataEntry.recvBuf[nextChunkStart].addr,
         bytesRemaining
       )
-      handleData.bytesReceived = bytesRemaining
+      dataEntry.bytesReceived = bytesRemaining
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
-        let request = server.popRequest(clientSocket, handleData)
+        let request = server.popRequest(clientSocket, dataEntry)
         server.postTask(WorkerTask(request: request))
   else:
-    if handleData.requestState.contentLength > server.maxBodyLen:
+    if dataEntry.requestState.contentLength > server.maxBodyLen:
       server.log(DebugLevel, "Dropped connection, body too long")
       return true # Body is too large, close the connection
 
-    if handleData.bytesReceived < handleData.requestState.contentLength:
+    if dataEntry.bytesReceived < dataEntry.requestState.contentLength:
       return false # Need to receive more bytes
 
     # We have the entire request body
 
     # If this request has a body
-    if handleData.requestState.contentLength > 0:
+    if dataEntry.requestState.contentLength > 0:
       # If the receive buffer only has the body in it, just move it and reset
       # the receive buffer
-      if handleData.requestState.contentLength == handleData.bytesReceived:
-        handleData.requestState.body = move handleData.recvBuffer
-        handleData.recvBuffer.setLen(initialRecvBufferLen)
-        handleData.bytesReceived = 0
+      if dataEntry.requestState.contentLength == dataEntry.bytesReceived:
+        dataEntry.requestState.body = move dataEntry.recvBuf
+        dataEntry.recvBuf.setLen(initialRecvBufLen)
+        dataEntry.bytesReceived = 0
       else:
         # Copy the body out of the buffer
-        handleData.requestState.body.setLen(
-            handleData.requestState.contentLength)
+        dataEntry.requestState.body.setLen(
+            dataEntry.requestState.contentLength)
         copyMem(
-          handleData.requestState.body[0].addr,
-          handleData.recvBuffer[0].addr,
-          handleData.requestState.contentLength
+          dataEntry.requestState.body[0].addr,
+          dataEntry.recvBuf[0].addr,
+          dataEntry.requestState.contentLength
         )
         # Remove this request from the receive buffer
         let bytesRemaining =
-          handleData.bytesReceived - handleData.requestState.contentLength
+          dataEntry.bytesReceived - dataEntry.requestState.contentLength
         copyMem(
-          handleData.recvBuffer[0].addr,
-          handleData.recvBuffer[handleData.requestState.contentLength].addr,
+          dataEntry.recvBuf[0].addr,
+          dataEntry.recvBuf[dataEntry.requestState.contentLength].addr,
           bytesRemaining
         )
-        handleData.bytesReceived = bytesRemaining
+        dataEntry.bytesReceived = bytesRemaining
 
-    let request = server.popRequest(clientSocket, handleData)
+    let request = server.popRequest(clientSocket, dataEntry)
     server.postTask(WorkerTask(request: request))
 
 proc afterRecv(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  dataEntry: DataEntry
 ): bool {.raises: [IOSelectorsException].} =
   # Have we upgraded this connection to a websocket?
   # If not, treat incoming bytes as part of HTTP requests.
-  if handleData.upgradedToWebSocket:
-    server.afterRecvWebSocket(clientSocket, handleData)
+  if dataEntry.upgradedToWebSocket:
+    server.afterRecvWebSocket(clientSocket, dataEntry)
   else:
-    server.afterRecvHttp(clientSocket, handleData)
+    server.afterRecvHttp(clientSocket, dataEntry)
 
 proc afterSend(
   server: Server,
   clientSocket: SocketHandle,
-  handleData: HandleData
+  dataEntry: DataEntry
 ): bool {.raises: [IOSelectorsException].} =
   let
-    outgoingBuffer = handleData.outgoingBuffers.peekFirst()
+    outgoingBuffer = dataEntry.outgoingBuffers.peekFirst()
     totalBytes = outgoingBuffer.buffer1.len + outgoingBuffer.buffer2.len
   if outgoingBuffer.bytesSent == totalBytes:
-    handleData.outgoingBuffers.shrink(1)
+    dataEntry.outgoingBuffers.shrink(1)
     if outgoingBuffer.isWebSocketUpgrade:
       let websocket = WebSocket(
         server: server,
@@ -1065,10 +1073,10 @@ proc afterSend(
       websocket.postWebSocketUpdate(WebSocketUpdate(event: OpenEvent))
 
     if outgoingBuffer.isCloseFrame:
-      handleData.closeFrameSent = true
+      dataEntry.closeFrameSent = true
     if outgoingBuffer.closeConnection:
       return true
-  if handleData.outgoingBuffers.len == 0:
+  if dataEntry.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
@@ -1133,12 +1141,12 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
       if User in readyKey.events:
-        let eventHandleData = server.selector.getData(readyKey.fd)
-        if eventHandleData.forEvent == server.responseQueued:
+        let eventDataEntry = server.selector.getData(readyKey.fd)
+        if eventDataEntry.event == server.responseQueued:
           responseQueuedTriggered = true
-        if eventHandleData.forEvent == server.sendQueued:
+        if eventDataEntry.event == server.sendQueued:
           sendQueuedTriggered = true
-        elif eventHandleData.forEvent == server.shutdown:
+        elif eventDataEntry.event == server.shutdown:
           shutdownTriggered = true
         else:
           discard
@@ -1150,17 +1158,17 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
       for encodedResponse in encodedResponses:
         if encodedResponse.clientSocket in server.selector:
-          let clientHandleData =
+          let clientDataEntry =
             server.selector.getData(encodedResponse.clientSocket)
 
-          clientHandleData.outgoingBuffers.addLast(encodedResponse)
+          clientDataEntry.outgoingBuffers.addLast(encodedResponse)
           server.selector.updateHandle2(
             encodedResponse.clientSocket,
             {Read, Write}
           )
 
           if encodedResponse.isWebSocketUpgrade:
-            clientHandleData.upgradedToWebSocket = true
+            clientDataEntry.upgradedToWebSocket = true
             let websocket = WebSocket(
               server: server,
               clientSocket: encodedResponse.clientSocket
@@ -1169,25 +1177,25 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             withLock server.websocketQueuesLock:
               server.websocketQueues[websocket] = move websocketQueue
               server.websocketClaimed[websocket] = false
-            if clientHandleData.bytesReceived > 0:
+            if clientDataEntry.bytesReceived > 0:
               # Why have we received bytes when we are upgrading the connection?
               needClosing.add(websocket.clientSocket)
-              clientHandleData.sendsWaitingForUpgrade.setLen(0)
+              clientDataEntry.sendsWaitingForUpgrade.setLen(0)
               server.log(
                 DebugLevel,
                 "Dropped WebSocket, received unexpected bytes after upgrade request"
               )
               continue
             # Are there any sends that were waiting for this response?
-            if clientHandleData.sendsWaitingForUpgrade.len > 0:
-              for encodedFrame in clientHandleData.sendsWaitingForUpgrade:
-                if clientHandleData.closeFrameQueuedAt > 0:
+            if clientDataEntry.sendsWaitingForUpgrade.len > 0:
+              for encodedFrame in clientDataEntry.sendsWaitingForUpgrade:
+                if clientDataEntry.closeFrameQueuedAt > 0:
                   discard # Drop this message
                 else:
-                  clientHandleData.outgoingBuffers.addLast(encodedFrame)
+                  clientDataEntry.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
-                    clientHandleData.closeFrameQueuedAt = epochTime()
-              clientHandleData.sendsWaitingForUpgrade.setLen(0)
+                    clientDataEntry.closeFrameQueuedAt = epochTime()
+              clientDataEntry.sendsWaitingForUpgrade.setLen(0)
         else:
           server.log(DebugLevel, "Dropped response to disconnected client")
 
@@ -1198,24 +1206,24 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
       for encodedFrame in encodedFrames:
         if encodedFrame.clientSocket in server.selector:
-          let clientHandleData =
+          let clientDataEntry =
             server.selector.getData(encodedFrame.clientSocket)
 
           # Have we sent the upgrade response yet?
-          if clientHandleData.upgradedToWebSocket:
-            if clientHandleData.closeFrameQueuedAt > 0:
+          if clientDataEntry.upgradedToWebSocket:
+            if clientDataEntry.closeFrameQueuedAt > 0:
               discard # Drop this message
             else:
-              clientHandleData.outgoingBuffers.addLast(encodedFrame)
+              clientDataEntry.outgoingBuffers.addLast(encodedFrame)
               if encodedFrame.isCloseFrame:
-                clientHandleData.closeFrameQueuedAt = epochTime()
+                clientDataEntry.closeFrameQueuedAt = epochTime()
               server.selector.updateHandle2(
                 encodedFrame.clientSocket,
                 {Read, Write}
               )
           else:
             # If we haven't, queue this to wait for the upgrade response
-            clientHandleData.sendsWaitingForUpgrade.add(encodedFrame)
+            clientDataEntry.sendsWaitingForUpgrade.add(encodedFrame)
         else:
           server.log(DebugLevel, "Dropped message to disconnected client")
 
@@ -1261,28 +1269,28 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
           server.clientSockets.incl(clientSocket)
 
-          let handleData = HandleData()
-          handleData.recvBuffer.setLen(initialRecvBufferLen)
-          server.selector.registerHandle2(clientSocket, {Read}, handleData)
+          let dataEntry = DataEntry(kind: ClientSocketEntry)
+          dataEntry.recvBuf.setLen(initialRecvBufLen)
+          server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
       else: # Client socket
         if Error in readyKey.events:
           needClosing.add(readyKey.fd.SocketHandle)
           continue
 
-        let handleData = server.selector.getData(readyKey.fd)
+        let dataEntry = server.selector.getData(readyKey.fd)
 
         if Read in readyKey.events:
           # Expand the buffer if it is full
-          if handleData.bytesReceived == handleData.recvBuffer.len:
-            handleData.recvBuffer.setLen(handleData.recvBuffer.len * 2)
+          if dataEntry.bytesReceived == dataEntry.recvBuf.len:
+            dataEntry.recvBuf.setLen(dataEntry.recvBuf.len * 2)
 
           let bytesReceived = readyKey.fd.SocketHandle.recv(
-            handleData.recvBuffer[handleData.bytesReceived].addr,
-            (handleData.recvBuffer.len - handleData.bytesReceived).cint,
+            dataEntry.recvBuf[dataEntry.bytesReceived].addr,
+            (dataEntry.recvBuf.len - dataEntry.bytesReceived).cint,
             0
           )
           if bytesReceived > 0:
-            handleData.bytesReceived += bytesReceived
+            dataEntry.bytesReceived += bytesReceived
             receivedFrom.add(readyKey.fd.SocketHandle)
           else:
             needClosing.add(readyKey.fd.SocketHandle)
@@ -1290,7 +1298,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
         if Write in readyKey.events:
           let
-            outgoingBuffer = handleData.outgoingBuffers.peekFirst()
+            outgoingBuffer = dataEntry.outgoingBuffers.peekFirst()
             bytesSent =
               if outgoingBuffer.bytesSent < outgoingBuffer.buffer1.len:
                 readyKey.fd.SocketHandle.send(
@@ -1317,8 +1325,8 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
       if clientSocket in needClosing:
         continue
       let
-        handleData = server.selector.getData(clientSocket)
-        needsClosing = server.afterRecv(clientSocket, handleData)
+        dataEntry = server.selector.getData(clientSocket)
+        needsClosing = server.afterRecv(clientSocket, dataEntry)
       if needsClosing:
         needClosing.add(clientSocket)
 
@@ -1326,24 +1334,24 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
       if clientSocket in needClosing:
         continue
       let
-        handleData = server.selector.getData(clientSocket)
-        needsClosing = server.afterSend(clientSocket, handleData)
+        dataEntry = server.selector.getData(clientSocket)
+        needsClosing = server.afterSend(clientSocket, dataEntry)
       if needsClosing:
         needClosing.add(clientSocket)
 
     for clientSocket in needClosing:
-      let handleData = server.selector.getData(clientSocket)
+      let dataEntry = server.selector.getData(clientSocket)
       try:
         server.selector.unregister(clientSocket)
       except:
-        # Leaks HandleData for this socket
+        # Leaks DataEntry for this socket
         server.log(DebugLevel, "Error unregistering client socket")
       finally:
         clientSocket.close()
         server.clientSockets.excl(clientSocket)
-      if handleData.upgradedToWebSocket:
+      if dataEntry.upgradedToWebSocket:
         let websocket = WebSocket(server: server, clientSocket: clientSocket)
-        if not handleData.closeFrameSent:
+        if not dataEntry.closeFrameSent:
           var error = WebSocketUpdate(event: ErrorEvent)
           websocket.postWebSocketUpdate(error)
         var close = WebSocketUpdate(event: CloseEvent)
@@ -1401,7 +1409,8 @@ proc serve*(
     if nativesockets.listen(server.socket, listenBacklogLen) < 0:
       raiseOSError(osLastError())
 
-    server.selector.registerHandle2(server.socket, {Read}, nil)
+    let dataEntry = DataEntry(kind: ServerSocketEntry)
+    server.selector.registerHandle2(server.socket, {Read}, dataEntry)
   except:
     server.destroy(true)
     raise currentExceptionAsMummyError()
@@ -1455,18 +1464,18 @@ proc newServer*(
     result.sendQueued = newSelectEvent()
     result.shutdown = newSelectEvent()
 
-    result.selector = newSelector[HandleData]()
+    result.selector = newSelector[DataEntry]()
 
-    let responseQueuedData = HandleData()
-    responseQueuedData.forEvent = result.responseQueued
+    let responseQueuedData = DataEntry(kind: EventEntry)
+    responseQueuedData.event = result.responseQueued
     result.selector.registerEvent(result.responseQueued, responseQueuedData)
 
-    let sendQueuedData = HandleData()
-    sendQueuedData.forEvent = result.sendQueued
+    let sendQueuedData = DataEntry(kind: EventEntry)
+    sendQueuedData.event = result.sendQueued
     result.selector.registerEvent(result.sendQueued, sendQueuedData)
 
-    let shutdownData = HandleData()
-    shutdownData.forEvent = result.shutdown
+    let shutdownData = DataEntry(kind: EventEntry)
+    shutdownData.event = result.shutdown
     result.selector.registerEvent(result.shutdown, shutdownData)
 
     when useLockAndCond:
