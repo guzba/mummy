@@ -186,6 +186,11 @@ proc pathParts(uri: string): seq[string] =
 
 proc toHandler*(router: Router): RequestHandler =
   return proc(request: Request) =
+    ## All requests arrive here to be routed
+
+    if request.uri.len > 0 and request.uri[0] != '/' and ':' in request.uri:
+      raise newException(MummyError, "Unexpected absolute URI " & request.uri)
+
     try:
       let uriParts = request.uri.pathParts()
 
