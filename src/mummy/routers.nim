@@ -188,8 +188,15 @@ proc toHandler*(router: Router): RequestHandler =
   return proc(request: Request) =
     ## All requests arrive here to be routed
 
+    template notFound() =
+      if router.notFoundHandler != nil:
+        router.notFoundHandler(request)
+      else:
+        defaultNotFoundHandler(request)
+
     if request.uri.len > 0 and request.uri[0] != '/' and ':' in request.uri:
-      raise newException(MummyError, "Unexpected absolute URI " & request.uri)
+      notFound()
+      return
 
     try:
       let uriParts = request.uri.pathParts()
@@ -249,10 +256,7 @@ proc toHandler*(router: Router): RequestHandler =
         else:
           defaultMethodNotAllowedHandler(request)
       else:
-        if router.notFoundHandler != nil:
-          router.notFoundHandler(request)
-        else:
-          defaultNotFoundHandler(request)
+        notFound()
     except:
       let e = getCurrentException()
       if router.errorHandler != nil:
