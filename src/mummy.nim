@@ -363,7 +363,8 @@ proc respond*(
     else:
       discard
 
-  headers["Content-Length"] = $body.len
+  if "Content-Length" notin headers:
+    headers["Content-Length"] = $body.len
 
   encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
   if encodedResponse.buffer1.len + body.len < 32 * 1024:

@@ -120,9 +120,16 @@ proc defaultNotFoundHandler(request: Request) =
   request.respond(404, headers, "<h1>Not Found</h1>")
 
 proc defaultMethodNotAllowedHandler(request: Request) =
+  const body = "<h1>Method Not Allowed</h1>"
+
   var headers: HttpHeaders
   headers["Content-Type"] = "text/html"
-  request.respond(405, headers, "<h1>Method Not Allowed</h1>")
+
+  if request.httpMethod == "HEAD":
+    headers["Content-Length"] = $body.len
+    request.respond(405, headers)
+  else:
+    request.respond(405, headers, body)
 
 proc isPartialWildcard(test: string): bool {.inline.} =
   test.len > 2 and test.startsWith('*') or test.endsWith('*')
