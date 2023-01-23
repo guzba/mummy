@@ -115,9 +115,16 @@ proc patch*(
   router.addRoute("PATCH", route, handler)
 
 proc defaultNotFoundHandler(request: Request) =
+  const body = "<h1>Not Found</h1>"
+
   var headers: HttpHeaders
   headers["Content-Type"] = "text/html"
-  request.respond(404, headers, "<h1>Not Found</h1>")
+
+  if request.httpMethod == "HEAD":
+    headers["Content-Length"] = $body.len
+    request.respond(404, headers)
+  else:
+    request.respond(404, headers, body)
 
 proc defaultMethodNotAllowedHandler(request: Request) =
   const body = "<h1>Method Not Allowed</h1>"
