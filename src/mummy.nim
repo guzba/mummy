@@ -7,7 +7,7 @@ when not compileOption("threads"):
 import mummy/common, mummy/fileloggers, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
-    std/times, zippy, webby/httpheaders
+    std/times, webby/httpheaders, zippy
 
 when defined(linux):
   when defined(nimdoc):
