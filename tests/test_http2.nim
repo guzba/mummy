@@ -1,4 +1,4 @@
-import httpclient, jsony, mummy, std/os, std/random
+import httpclient, jsony, mummy, std/random
 
 randomize()
 

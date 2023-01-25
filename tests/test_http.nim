@@ -1,4 +1,4 @@
-import httpclient, mummy, std/os, zippy
+import httpclient, mummy, zippy
 
 proc handler(request: Request) =
   case request.uri:
