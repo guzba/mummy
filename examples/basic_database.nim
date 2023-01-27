@@ -1,4 +1,4 @@
-import mummy, mummy/routers, waterpark/sqlite, std/strutils
+import mummy, mummy/routers, std/strutils, waterpark/sqlite
 
 ## This example demonstrates using a pool of SQLite connections to safely reuse
 ## connections in Mummy HTTP request handlers.

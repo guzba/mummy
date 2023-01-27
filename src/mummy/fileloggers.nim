@@ -1,4 +1,4 @@
-import common, std/locks, std/deques
+import common, std/deques, std/locks
 
 ## Since Mummy is a multithreaded server, we need an easy way to handle incoming
 ## logs from many threads.

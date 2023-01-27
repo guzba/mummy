@@ -1,4 +1,4 @@
-import mummy, std/asyncdispatch, std/os, ws
+import mummy, std/asyncdispatch, ws
 
 proc handler(request: Request) =
   case request.uri:

@@ -7,7 +7,7 @@ when not compileOption("threads"):
 import mummy/common, mummy/fileloggers, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
-    std/times, zippy, webby/httpheaders
+    std/times, webby/httpheaders, zippy
 
 when defined(linux):
   when defined(nimdoc):
@@ -233,34 +233,25 @@ proc trigger(
   server: Server,
   event: SelectEvent
 ) {.raises: [].} =
-  while true:
-    try:
-      event.trigger()
-    except:
-      let err = osLastError()
-      when defined(linux):
-        if err == OSErrorCode(EAGAIN):
-          continue
-      server.log(
-        ErrorLevel,
-        "Error triggering event ", $err, " ", osErrorMsg(err)
-      )
-    break
+  try:
+    event.trigger()
+  except:
+    let err = osLastError()
+    server.log(
+      ErrorLevel,
+      "Error triggering event ", $err, " ", osErrorMsg(err)
+    )
 
 when not useLockAndCond:
   proc trigger(server: Server, efd: cint) {.raises: [].} =
     var v: uint64 = 1
-    while true:
-      let ret = write(efd, v.addr, sizeof(uint64))
-      if ret != sizeof(uint64):
-        let err = osLastError()
-        if err == OSErrorCode(EAGAIN):
-          continue
-        server.log(
-          ErrorLevel,
-          "Error writing to eventfd ", $err, " ", osErrorMsg(err)
-        )
-      break
+    let ret = write(efd, v.addr, sizeof(uint64))
+    if ret != sizeof(uint64):
+      let err = osLastError()
+      server.log(
+        ErrorLevel,
+        "Error writing to eventfd ", $err, " ", osErrorMsg(err)
+      )
 
 proc send*(
   websocket: WebSocket,
@@ -531,17 +522,13 @@ proc workerProc(params: (Server, int)) {.raises: [].} =
         discard poll(pollFds[0].addr, 2, -1)
         if pollFds[0].revents != 0:
           var data: uint64 = 0
-          while true:
-            let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
-            if ret != sizeof(uint64):
-              let err = osLastError()
-              if err == OSErrorCode(EAGAIN):
-                continue
-              server.log(
-                ErrorLevel,
-                "Error reading eventfd ", $err, " ", osErrorMsg(err)
-              )
-            break
+          let ret = posix.read(pollFds[0].fd, data.addr, sizeof(uint64))
+          if ret != sizeof(uint64):
+            let err = osLastError()
+            server.log(
+              ErrorLevel,
+              "Error reading eventfd ", $err, " ", osErrorMsg(err)
+            )
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   when useLockAndCond:
@@ -1072,7 +1059,6 @@ proc afterSend(
         clientSocket: clientSocket
       )
       websocket.postWebSocketUpdate(WebSocketUpdate(event: OpenEvent))
-
     if outgoingBuffer.isCloseFrame:
       dataEntry.closeFrameSent = true
     if outgoingBuffer.closeConnection:
@@ -1191,7 +1177,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             if clientDataEntry.sendsWaitingForUpgrade.len > 0:
               for encodedFrame in clientDataEntry.sendsWaitingForUpgrade:
                 if clientDataEntry.closeFrameQueuedAt > 0:
-                  discard # Drop this message
+                  server.log(DebugLevel, "Dropped message after WebSocket close")
                 else:
                   clientDataEntry.outgoingBuffers.addLast(encodedFrame)
                   if encodedFrame.isCloseFrame:
@@ -1213,7 +1199,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           # Have we sent the upgrade response yet?
           if clientDataEntry.upgradedToWebSocket:
             if clientDataEntry.closeFrameQueuedAt > 0:
-              discard # Drop this message
+              server.log(DebugLevel, "Dropped message after WebSocket close")
             else:
               clientDataEntry.outgoingBuffers.addLast(encodedFrame)
               if encodedFrame.isCloseFrame:
