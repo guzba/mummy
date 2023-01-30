@@ -45,6 +45,7 @@ type
     uri*: string
     headers*: HttpHeaders
     body*: string
+    remoteAddress*: string
     server: Server
     clientSocket: SocketHandle
     responded: bool
@@ -117,6 +118,7 @@ type
     of EventEntry:
       event: SelectEvent
     of ClientSocketEntry:
+      remoteAddress: string
       recvBuf: string
       bytesReceived: int
       requestState: IncomingRequestState
@@ -749,6 +751,7 @@ proc popRequest(
   result = cast[Request](allocShared0(sizeof(RequestObj)))
   result.server = server
   result.clientSocket = clientSocket
+  result.remoteAddress = dataEntry.remoteAddress
   result.httpVersion = dataEntry.requestState.httpVersion
   result.httpMethod = move dataEntry.requestState.httpMethod
   result.uri = move dataEntry.requestState.uri
@@ -1225,7 +1228,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
       if readyKey.fd == server.socket.int:
         if Read in readyKey.events:
-          let (clientSocket, _) =
+          let (clientSocket, remoteAddress) =
             when defined(linux) and not defined(nimdoc):
               var
                 sockAddr: SockAddr
@@ -1257,6 +1260,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           server.clientSockets.incl(clientSocket)
 
           let dataEntry = DataEntry(kind: ClientSocketEntry)
+          dataEntry.remoteAddress = remoteAddress
           dataEntry.recvBuf.setLen(initialRecvBufLen)
           server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
       else: # Client socket
