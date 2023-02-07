@@ -180,9 +180,9 @@ proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
 proc pathParts(uri: string): seq[string] =
   # The URI path is assumed to end at the first ? & #
   var
-    a = uri.rfind('?')
-    b = uri.rfind('&')
-    c = uri.rfind('#')
+    a = uri.find('?')
+    b = uri.find('&')
+    c = uri.find('#')
   var len = uri.len
   if a != -1:
     len = min(len, a)
