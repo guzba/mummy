@@ -439,15 +439,10 @@ proc workerProc(params: (Server, int)) {.raises: [].} =
       try:
         server.handler(task.request)
       except:
-        block:
-          let e = getCurrentException()
-          server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
+        let e = getCurrentException()
+        server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
         if not task.request.responded:
-          try:
-            task.request.respond(500)
-          except: # Last resort
-            let e = getCurrentException()
-            server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
+          task.request.respond(500)
       `=destroy`(task.request[])
       deallocShared(task.request)
     else: # WebSocket
