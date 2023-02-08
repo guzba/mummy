@@ -440,7 +440,10 @@ proc workerProc(params: (Server, int)) {.raises: [].} =
         server.handler(task.request)
       except:
         let e = getCurrentException()
-        server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
+        server.log(
+          ErrorLevel,
+          "Handler exception: " & e.msg & " " & e.getStackTrace()
+        )
         if not task.request.responded:
           task.request.respond(500)
       `=destroy`(task.request[])
