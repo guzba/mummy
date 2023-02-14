@@ -4,7 +4,7 @@ when not defined(gcArc) and not defined(gcOrc):
 when not compileOption("threads"):
   {.error: "Using --threads:on is required by Mummy.".}
 
-import mummy/common, mummy/fileloggers, mummy/internal, std/atomics, std/base64,
+import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
     std/times, webby/httpheaders, zippy
@@ -27,7 +27,7 @@ else:
   proc eventfd(count: cuint, flags: cint): cint
      {.cdecl, importc: "eventfd", header: "<sys/eventfd.h>".}
 
-export Port, common, fileloggers, httpheaders
+export Port, common, httpheaders
 
 const
   listenBacklogLen = 128

@@ -1,4 +1,4 @@
-import mummy, std/os
+import mummy, mummy/fileloggers, std/os
 
 ## This example shows filtering logs based on level and then writing them
 ## to a file using Mummy's FileLogger.
