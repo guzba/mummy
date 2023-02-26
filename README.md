@@ -24,6 +24,8 @@ The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
 
 * [NimDocs.com](https://nimdocs.com) - view the [source code here](https://github.com/treeform/nimdocs/blob/master/src/nimdocs.nim)
 
+* [Mummy in Production](https://forum.nim-lang.org/t/9902) - real-world use and performance
+
 ## How is Mummy different?
 
 Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. Your HTTP handlers probably won't even need to think about threads at all.
