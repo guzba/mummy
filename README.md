@@ -16,8 +16,6 @@ Mummy has been written specifically to maximize the performance of your server h
 * Built-in first-class WebSocket support.
 * Multiplexed socket IO without the `{.async.}` price.
 
-⚠️ Mummy is brand new so please exercise reasonable caution!
-
 Mummy requires `--threads:on` and `--mm:orc` or `--mm:arc`.
 
 The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
