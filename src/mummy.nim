@@ -1393,8 +1393,9 @@ proc serve*(
   address = "localhost"
 ) {.raises: [MummyError].} =
   ## The server will serve on the address and port. The default address is
-  ## localhost. Use "0.0.0.0" to make the server externally accessible (with
-  ## caution).
+  ## localhost. Use "0.0.0.0" or "::" to make the server externally
+  ## accessible (with caution).  Listening on IPv6 isn't currently
+  ## possible on Windows.
   ## This call does not return unless server.close() is called from another
   ## thread.
 
@@ -1402,10 +1403,25 @@ proc serve*(
     raise newException(MummyError, "Server already has a socket")
 
   try:
-    server.socket = createNativeSocket(
-      Domain.AF_INET,
+    # Listening on IPv6 isn't working on Windows so fallback to IPv4 until
+    # the problem is identified and fixed.
+    when defined(windows):
+      const domainType = Domain.AF_INET
+    else:
+      const domainType = Domain.AF_UNSPEC
+
+    let ai = getAddrInfo(
+      address,
+      port,
+      domainType,
       SockType.SOCK_STREAM,
       Protocol.IPPROTO_TCP,
+    )
+
+    server.socket = createNativeSocket(
+      ai.ai_family,
+      ai.ai_socktype,
+      ai.ai_protocol,
       false
     )
     if server.socket == osInvalidSocket:
@@ -1414,13 +1430,6 @@ proc serve*(
     server.socket.setBlocking(false)
     server.socket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
 
-    let ai = getAddrInfo(
-      address,
-      port,
-      Domain.AF_INET,
-      SockType.SOCK_STREAM,
-      Protocol.IPPROTO_TCP,
-    )
     try:
       if bindAddr(server.socket, ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
         raiseOSError(osLastError())
