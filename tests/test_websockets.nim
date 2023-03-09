@@ -53,7 +53,7 @@ var requesterThread: Thread[void]
 proc requesterProc() =
   server.waitUntilReady()
 
-  let websocket = waitFor newWebSocket("ws://127.0.0.1:8081")
+  let websocket = waitFor newWebSocket("ws://localhost:8081")
   doAssert (waitFor websocket.receiveStrPacket()) == "First"
   doAssert (waitFor websocket.receiveStrPacket()) == "Second"
   waitFor websocket.send("Third")
