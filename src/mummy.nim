@@ -32,7 +32,7 @@ export Port, common, httpheaders
 const
   listenBacklogLen = 128
   maxEventsPerSelectLoop = 64
-  initialRecvBufLen = (32 * 1024) - 9 # 8 byte cap field + null terminator
+  initialRecvBufLen = (4 * 1024) - 9 # 8 byte cap field + null terminator
 
 let
   http10 = "HTTP/1.0"
