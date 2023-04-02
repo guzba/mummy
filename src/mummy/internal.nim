@@ -10,8 +10,8 @@ proc encodeFrameHeader*(
 ): string {.raises: [], gcsafe.} =
   assert (opcode and 0b11110000) == 0
 
+  # Calculate the frame header buffer len in advance to just do one allocation
   var frameHeaderLen = 2
-
   if payloadLen <= 125:
     discard
   elif payloadLen <= uint16.high.int:
@@ -43,6 +43,7 @@ proc encodeHeaders*(
     statusCode = $statusCode
     statusLineLen = 9 + statusCode.len + 2
 
+  # Calculate the header buffer len in advance to just do one allocation
   var headersLen = statusLineLen
   for (k, v) in headers:
     # k + ": " + v + "\r\n"

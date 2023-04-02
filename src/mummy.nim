@@ -782,7 +782,7 @@ proc afterRecvHttp(
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
-    # We have the headers, now to parse them
+    # We have the headers, now to parse them (avoiding excess allocations)
 
     var lineNum, lineStart: int
     while lineStart < headersEnd:
@@ -915,6 +915,8 @@ proc afterRecvHttp(
     else:
       # This could be optimized away by having [0] be [head] where head can move
       # without having to copy the headers out
+      # Preferring to copy the headers out to avoid the worst case of copying
+      # huge bodies
       copyMem(
         dataEntry.recvBuf[0].addr,
         dataEntry.recvBuf[bodyStart].addr,
