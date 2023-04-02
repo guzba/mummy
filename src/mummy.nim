@@ -187,6 +187,9 @@ proc log(server: Server, level: LogLevel, args: varargs[string]) =
     discard # ???
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
+  # If a header looks like `Accept-Encoding: gzip,deflate` then we may want to
+  # check if the value contains a specific token (in this case gzip or deflate)
+  # This proc does a case-insensitive check while avoiding allocations
   for (k, v) in headers:
     if cmpIgnoreCase(k, key) == 0:
       var first = 0
@@ -356,6 +359,8 @@ proc respond*(
     else:
       discard
 
+  # This is usually not set by the caller, however it needs to be for HEAD
+  # responses where there is a Content-Length but no body
   if "Content-Length" notin headers:
     headers["Content-Length"] = $body.len
 
@@ -782,7 +787,7 @@ proc afterRecvHttp(
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
-    # We have the headers, now to parse them
+    # We have the headers, now to parse them (avoiding excess allocations)
 
     var lineNum, lineStart: int
     while lineStart < headersEnd:
@@ -915,6 +920,8 @@ proc afterRecvHttp(
     else:
       # This could be optimized away by having [0] be [head] where head can move
       # without having to copy the headers out
+      # Preferring to copy the headers out to avoid the worst case of copying
+      # huge bodies
       copyMem(
         dataEntry.recvBuf[0].addr,
         dataEntry.recvBuf[bodyStart].addr,
@@ -1058,6 +1065,8 @@ proc afterSend(
     outgoingBuffer = dataEntry.outgoingBuffers.peekFirst()
     totalBytes = outgoingBuffer.buffer1.len + outgoingBuffer.buffer2.len
   if outgoingBuffer.bytesSent == totalBytes:
+    # The current outgoing bufgfer for this socket has been fully sent
+    # Remove it from the outgoing buffer queue
     dataEntry.outgoingBuffers.shrink(1)
     if outgoingBuffer.isWebSocketUpgrade:
       let websocket = WebSocket(
@@ -1069,6 +1078,7 @@ proc afterSend(
       dataEntry.closeFrameSent = true
     if outgoingBuffer.closeConnection:
       return true
+  # If we don't have any more outgoing buffers, update the selector
   if dataEntry.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
@@ -1130,6 +1140,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
     let readyCount = server.selector.selectInto(-1, readyKeys)
 
+    # Collapse these events into simple flags
     var responseQueuedTriggered, sendQueuedTriggered, shutdownTriggered: bool
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
@@ -1145,6 +1156,9 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           discard
 
     if responseQueuedTriggered:
+      # If we have responses queued move them to the outgoing buffer queue of
+      # the appropriate socket and update the socket selector to include Write
+
       withLock server.responseQueueLock:
         while server.responseQueue.len > 0:
           encodedResponses.add(server.responseQueue.popFirst())
@@ -1193,6 +1207,9 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           server.log(DebugLevel, "Dropped response to disconnected client")
 
     if sendQueuedTriggered:
+      # If we have any sends queued move them to the outgoing buffer queue of
+      # the appropriate socket and update the socket selector to include Write
+
       withLock server.sendQueueLock:
         while server.sendQueue.len > 0:
           encodedFrames.add(server.sendQueue.popFirst())
@@ -1224,12 +1241,14 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
       server.destroy(true)
       return
 
+    # This is the main client socket select loop
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
 
       # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
       if readyKey.fd == server.socket.int:
+        # We should have a new client socket to accept
         if Read in readyKey.events:
           let (clientSocket, remoteAddress) =
             when defined(linux) and not defined(nimdoc):
@@ -1492,6 +1511,8 @@ proc newServer*(
     raise currentExceptionAsMummyError()
 
 proc responded*(request: Request): bool =
+  ## Check if this request has been responded to.
+  # This is only safe to call on the request handler thread right now, improve?
   request.responded
 
 proc waitUntilReady*(server: Server, timeout: float = 10) =
