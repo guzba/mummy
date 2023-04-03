@@ -655,6 +655,14 @@ proc afterRecvWebSocket(
       payloadLen = nativesockets.htonl(l).int
       pos += 8
 
+    let isControlFrame = opcode in [0x8.uint8, 0x9, 0xA]
+    if isControlFrame and not fin:
+      # Per spec, control frames must not be fragmented
+      return true # Close the connection
+    if payloadLen > 125 and isControlFrame:
+      # Per spec, control frames are only allowed payloads up to 125 bytes
+      return true # Close the connection
+
     if dataEntry.frameState.frameLen + payloadLen > server.maxMessageLen:
       server.log(DebugLevel, "Dropped WebSocket, message too long")
       return true # Message is too large, close the connection
