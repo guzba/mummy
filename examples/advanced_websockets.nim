@@ -158,9 +158,9 @@ proc websocketHandler(
         else:
           echo "No clientToChannel entry at websocket open"
 
-    # If this is a new channel we need to send Redis a "SUBSCRIBE" command for it
-    if needsSubscribe:
-      pubsubRedis.send("SUBSCRIBE", channel)
+        # If this is a new channel we need to send Redis a "SUBSCRIBE" command for it
+        if needsSubscribe:
+          pubsubRedis.send("SUBSCRIBE", channel)
 
   of MessageEvent:
     if message.kind == Ping:
