@@ -24,7 +24,8 @@ The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
 
 * [NimDocs.com](https://nimdocs.com) - view the [source code here](https://github.com/treeform/nimdocs/blob/master/src/nimdocs.nim)
 
-* [Mummy in Production](https://forum.nim-lang.org/t/9902) - real-world use and performance
+* [Mummy in Production #1](https://forum.nim-lang.org/t/9902) - 500+ HTTP requests per second on a small VM, very light use of CPU+RAM
+* [Mummy in Production #2](https://forum.nim-lang.org/t/10066) - 100k concurrent WebSocket connections, room for 1M+
 
 ## How is Mummy different?
 
