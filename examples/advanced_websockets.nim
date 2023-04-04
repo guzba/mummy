@@ -1,6 +1,6 @@
 import mummy, mummy/routers, std/locks, std/sets, std/tables, std/selectors, ready
 
-## This is a more complex example of using Mummy as a WebSocket server.
+## This is a more complex example of using Mummy as a websocket server.
 ##
 ## WebSocket clients subscribe to a channel based on the url, eg /<channel_name>.
 ## Those clients will then receive any messages published to <channel_name>.
@@ -10,11 +10,11 @@ import mummy, mummy/routers, std/locks, std/sets, std/tables, std/selectors, rea
 ## is used. (Check out the Redis docs on that to learn more.)
 ##
 ## This server sends a heartbeat message to websocket clients at least every 30
-## seconds. This ensure the connection stays open and active in a way WebSocket
-## clients can check (for example, WebSocket Ping/Pong is not visible to JS).
+## seconds. This ensure the connection stays open and active in a way websocket
+## clients can check (for example, websocket Ping/Pong is not visible to JS).
 
 const
-  workerThreads = 4 # The number of threads handling incoming HTTP requests and WebSocket messages.
+  workerThreads = 4 # The number of threads handling incoming HTTP requests and websocket messages.
   port = 8123 # The HTTP port to listen on.
   heartbeatMessage = """{"type":"heartbeat"}""" # The JSON heartbeat message.
 
@@ -22,19 +22,19 @@ let pubsubRedis = newRedisConn() # The Redis connection used for PubSub.
 
 var
   lock: Lock # The lock for global memory, just one lock is fine.
-  clientToChannel: Table[WebSocket, string] # Store what channel this WebSocket is subscribed to.
-  channels: Table[string, HashSet[WebSocket]] # Map from a channel to its WebSockets.
-  heartbeatBuckets: array[30, HashSet[WebSocket]]  # The buckets of WebSockets to send heartbeats to.
+  clientToChannel: Table[WebSocket, string] # Store what channel this websocket is subscribed to.
+  channels: Table[string, HashSet[WebSocket]] # Map from a channel to its websockets.
+  heartbeatBuckets: array[30, HashSet[WebSocket]]  # The buckets of websockets to send heartbeats to.
 
 # Remember to initialize the lock.
 initLock(lock)
 
-# This is the HTTP handler for /* requests. These requests are upgraded to WebSockets.
+# This is the HTTP handler for /* requests. These requests are upgraded to websockets.
 proc upgradeHandler(request: Request) =
   let channel = request.uri[1 .. ^1] # Everything after / is the channel name.
 
-  # We need to take the lock on global memory, upgrade to WebSocket and store
-  # what channel this WebSocket subscribed to since we will not have `.uri` later.
+  # We need to take the lock on global memory, upgrade to websocket and store
+  # what channel this websocket subscribed to since we will not have `.uri` later.
   {.gcsafe.}:
     withLock lock:
       let websocket = request.upgradeToWebSocket()
@@ -54,7 +54,7 @@ proc receiveThreadProc() =
       of "subscribe", "unsubscribe":
         discard
       of "message":
-        # If we have received message, send it to the WebSockets subscribed
+        # If we have received message, send it to the websockets subscribed
         # to that channel.
         let
           channel = reply[1].to(string)
@@ -100,7 +100,7 @@ proc heartbeatThreadProc() =
       discard heartbeatRateSelector.selectInto(-1, readyKeys)
       # We have woken up, time to send some heartbeats.
       # We send a heartbeat every 30 seconds so we have 30 heartbeat buckets.
-      # To evenly spread the workload, each WebSocket is added to one of the
+      # To evenly spread the workload, each websocket is added to one of the
       # buckets. All we need to do is wake up, grab the next bucket and send
       # the heartbeat messages out.
       # Why?
@@ -134,7 +134,7 @@ proc websocketHandler(
 ) =
   case event:
   of OpenEvent:
-    # We have just opened a new WebSocket. Send an initial heartbeat and
+    # We have just opened a new websocket. Send an initial heartbeat and
     # get it wired up to receive messages.
 
     websocket.send(heartbeatMessage)
@@ -143,16 +143,16 @@ proc websocketHandler(
       channel: string
       needsSubscribe: bool
 
-    # Lock global memory and get this WebSocket wired up.
+    # Lock global memory and get this websocket wired up.
     {.gcsafe.}:
       withLock lock:
         if websocket in clientToChannel:
-          channel = clientToChannel[websocket] # Grab the channel this WebSocket subscribed to.
+          channel = clientToChannel[websocket] # Grab the channel this websocket subscribed to.
           if channel notin channels: # If this is a new channel, set it up.
             channels[channel] = initHashSet[WebSocket]()
             needsSubscribe = true # Since this is a new channel we need to tell Redis.
-          channels[channel].incl(websocket) # Add this WebSocket to the channel subscriber set.
-          # Add this WebSocket to a heartbeat bucket.
+          channels[channel].incl(websocket) # Add this websocket to the channel subscriber set.
+          # Add this websocket to a heartbeat bucket.
           let bucket = abs(websocket.hash()) mod heartbeatBuckets.len
           heartbeatBuckets[bucket].incl(websocket)
         else:
@@ -170,13 +170,13 @@ proc websocketHandler(
     discard
 
   of CloseEvent:
-    # A WebSocket has closed. Time to clean things up.
+    # A websocket has closed. Time to clean things up.
 
     var
       channel: string
       needsUnsubscribe: bool
 
-    # Lock global memory and remove the WebSocket.
+    # Lock global memory and remove the websocket.
     {.gcsafe.}:
       withLock lock:
         if websocket in clientToChannel:
@@ -199,7 +199,7 @@ proc websocketHandler(
         if needsUnsubscribe:
           pubsubRedis.send("UNSUBSCRIBE", channel)
 
-# A simple router sending all requests to be upgraded to WebSockets.
+# A simple router sending all requests to be upgraded to websockets.
 var router: Router
 router.get("/*", upgradeHandler)
 
