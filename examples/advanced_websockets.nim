@@ -14,17 +14,17 @@ import mummy, mummy/routers, std/locks, std/sets, std/tables, std/selectors, rea
 ## clients can check (for example, WebSocket Ping/Pong is not visible to JS).
 
 const
-  workerThreads = 4 # The number of threads handling incoming HTTP requests and WebSocket messages
+  workerThreads = 4 # The number of threads handling incoming HTTP requests and WebSocket messages.
   port = 8123 # The HTTP port to listen on.
   heartbeatMessage = """{"type":"heartbeat"}""" # The JSON heartbeat message.
 
-let pubsubRedis = newRedisConn() # The Redis connection used for PubSub
+let pubsubRedis = newRedisConn() # The Redis connection used for PubSub.
 
 var
-  lock: Lock # The lock for global memory, just one lock is fine
-  clientToChannel: Table[WebSocket, string] # Store what channel this WebSocket is subscribed to
-  channels: Table[string, HashSet[WebSocket]] # Map from a channel to its WebSockets
-  heartbeatBuckets: array[30, HashSet[WebSocket]]  # The buckets of WebSockets to send a heartbeats to
+  lock: Lock # The lock for global memory, just one lock is fine.
+  clientToChannel: Table[WebSocket, string] # Store what channel this WebSocket is subscribed to.
+  channels: Table[string, HashSet[WebSocket]] # Map from a channel to its WebSockets.
+  heartbeatBuckets: array[30, HashSet[WebSocket]]  # The buckets of WebSockets to send a heartbeats to.
 
 # Remember to initialize the lock.
 initLock(lock)
@@ -83,7 +83,7 @@ proc receiveThreadProc() =
 var receiveThread: Thread[void]
 createThread(receiveThread, receiveThreadProc)
 
-# This is the proc tha the thread dedicated to sending heartbeat messages runs.
+# This is the proc that the thread dedicated to sending heartbeat messages runs.
 proc heartbeatThreadProc() =
   try:
     # Set up a selector with a timer to wake up every second.
@@ -103,6 +103,11 @@ proc heartbeatThreadProc() =
       # To evently spread the workload, each WebSocket is added to one of the
       # buckets. All we need to do is wake up, grab the next bucket and send
       # the heartbeat messages out.
+      # Why?
+      # Spreading the load evenly can become very important. If there are 300k
+      # clients connected, sending a heartbeat every 30 seconds would mean
+      # sudddenly sending 300k messages in huge bursts.
+      # Instead, I have things set up to send 10k message every second in this case.
       # Lock global memory and copy out the current set of clients for this bucket.
       var clients: HashSet[WebSocket]
       {.gcsafe.}:
