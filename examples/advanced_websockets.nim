@@ -24,7 +24,7 @@ var
   lock: Lock # The lock for global memory, just one lock is fine.
   clientToChannel: Table[WebSocket, string] # Store what channel this WebSocket is subscribed to.
   channels: Table[string, HashSet[WebSocket]] # Map from a channel to its WebSockets.
-  heartbeatBuckets: array[30, HashSet[WebSocket]]  # The buckets of WebSockets to send a heartbeats to.
+  heartbeatBuckets: array[30, HashSet[WebSocket]]  # The buckets of WebSockets to send heartbeats to.
 
 # Remember to initialize the lock.
 initLock(lock)
@@ -100,7 +100,7 @@ proc heartbeatThreadProc() =
       discard heartbeatRateSelector.selectInto(-1, readyKeys)
       # We have woken up, time to send some heartbeats.
       # We send a heartbeat every 30 seconds so we have 30 heartbeat buckets.
-      # To evently spread the workload, each WebSocket is added to one of the
+      # To evenly spread the workload, each WebSocket is added to one of the
       # buckets. All we need to do is wake up, grab the next bucket and send
       # the heartbeat messages out.
       # Why?
