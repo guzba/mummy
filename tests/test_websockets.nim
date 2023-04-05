@@ -1,4 +1,4 @@
-import mummy, std/asyncdispatch, ws
+import mummy, std/asyncdispatch, whisky
 
 proc handler(request: Request) =
   case request.uri:
@@ -16,7 +16,7 @@ var n: int
 proc websocketHandler(
   websocket: mummy.WebSocket,
   event: WebSocketEvent,
-  message: Message
+  message: mummy.Message
 ) =
   case event:
   of OpenEvent:
@@ -25,11 +25,11 @@ proc websocketHandler(
     websocket.send("Second")
   of MessageEvent:
     case message.kind:
-    of TextMessage:
+    of mummy.TextMessage:
       doAssert n == 1
       n += 1
       doAssert message.data == "Third"
-    of BinaryMessage:
+    of mummy.BinaryMessage:
       doAssert n == 2
       n += 1
       doAssert message.data == "Fourth"
@@ -39,7 +39,7 @@ proc websocketHandler(
       doAssert message.data == ""
     of mummy.Pong:
       doAssert false
-    websocket.send("Fifth", BinaryMessage)
+    websocket.send("Fifth", mummy.BinaryMessage)
   of ErrorEvent:
     discard
   of CloseEvent:
@@ -53,16 +53,17 @@ var requesterThread: Thread[void]
 proc requesterProc() =
   server.waitUntilReady()
 
-  let websocket = waitFor newWebSocket("ws://127.0.0.1:8081")
-  doAssert (waitFor websocket.receiveStrPacket()) == "First"
-  doAssert (waitFor websocket.receiveStrPacket()) == "Second"
-  waitFor websocket.send("Third")
-  waitFor websocket.send("Fourth", Binary)
-  waitFor websocket.send("", Opcode.Ping)
-  doAssert (waitFor websocket.receiveBinaryPacket()) == cast[seq[byte]]("Fifth")
-  websocket.close()
-  websocket.hangUp()
-  waitFor sleepAsync(100)
+  let ws = newWebSocket("ws://127.0.0.1:8081")
+  doAssert ws.receiveMessage() ==
+    some(whisky.Message(kind: whisky.TextMessage, data: "First"))
+  doAssert ws.receiveMessage() ==
+    some(whisky.Message(kind: whisky.TextMessage, data: "Second"))
+  ws.send("Third")
+  ws.send("Fourth", whisky.BinaryMessage)
+  ws.send("", whisky.Ping)
+  doAssert ws.receiveMessage() ==
+    some(whisky.Message(kind: whisky.BinaryMessage, data: "Fifth"))
+  ws.close()
 
   echo "Done, shut down the server"
   server.close()
