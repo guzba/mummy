@@ -17,7 +17,7 @@ jobs:
         nim-version: ${{ matrix.nim-version }}
         repo-token: ${{ secrets.GITHUB_TOKEN }}
     - run: nimble install -y
-    - run: nimble install -y ws
+    - run: nimble install -y whisky
     - run: nimble install -y jsony
     - run: nim c -r tests/test.nim
     - run: nim c -r tests/test_http.nim
