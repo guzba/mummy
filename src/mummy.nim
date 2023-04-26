@@ -160,12 +160,6 @@ proc `$`*(request: Request): string =
     result &= "HTTP/1.0"
   result &= " (" & $cast[uint](request) & ")"
 
-proc hash*(websocket: WebSocket): Hash =
-  var h: Hash
-  h = h !& hash(websocket.server)
-  h = h !& hash(websocket.clientSocket)
-  return !$h
-
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $cast[uint](hash(websocket))
 
