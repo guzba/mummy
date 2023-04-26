@@ -1,4 +1,4 @@
-import mummy, mummy/routers, std/locks, std/sets, std/tables, std/selectors, ready
+import mummy, mummy/routers, std/locks, std/sets, std/tables, std/selectors, ready, std/hashes
 
 ## This is a more complex example of using Mummy as a websocket server.
 ##
