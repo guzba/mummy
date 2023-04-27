@@ -1130,13 +1130,14 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
 proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
   var
     readyKeys: array[maxEventsPerSelectLoop, ReadyKey]
-    receivedFrom, sentTo, needClosing: seq[SocketHandle]
+    receivedFrom, sentTo: seq[SocketHandle]
+    needClosing: HashSet[SocketHandle]
     encodedResponses: seq[OutgoingBuffer]
     encodedFrames: seq[OutgoingBuffer]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
-    needClosing.setLen(0)
+    needClosing.clear()
     encodedResponses.setLen(0)
     encodedFrames.setLen(0)
 
@@ -1188,7 +1189,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
               server.websocketClaimed[websocket] = false
             if clientDataEntry.bytesReceived > 0:
               # Why have we received bytes when we are upgrading the connection?
-              needClosing.add(websocket.clientSocket)
+              needClosing.incl(websocket.clientSocket)
               clientDataEntry.sendsWaitingForUpgrade.setLen(0)
               server.log(
                 DebugLevel,
@@ -1289,7 +1290,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
       else: # Client socket
         if Error in readyKey.events:
-          needClosing.add(readyKey.fd.SocketHandle)
+          needClosing.incl(readyKey.fd.SocketHandle)
           continue
 
         let dataEntry = server.selector.getData(readyKey.fd)
@@ -1308,7 +1309,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             dataEntry.bytesReceived += bytesReceived
             receivedFrom.add(readyKey.fd.SocketHandle)
           else:
-            needClosing.add(readyKey.fd.SocketHandle)
+            needClosing.incl(readyKey.fd.SocketHandle)
             continue
 
         if Write in readyKey.events:
@@ -1333,7 +1334,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             outgoingBuffer.bytesSent += bytesSent
             sentTo.add(readyKey.fd.SocketHandle)
           else:
-            needClosing.add(readyKey.fd.SocketHandle)
+            needClosing.incl(readyKey.fd.SocketHandle)
             continue
 
     for clientSocket in receivedFrom:
@@ -1343,7 +1344,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         dataEntry = server.selector.getData(clientSocket)
         needsClosing = server.afterRecv(clientSocket, dataEntry)
       if needsClosing:
-        needClosing.add(clientSocket)
+        needClosing.incl(clientSocket)
 
     for clientSocket in sentTo:
       if clientSocket in needClosing:
@@ -1352,7 +1353,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         dataEntry = server.selector.getData(clientSocket)
         needsClosing = server.afterSend(clientSocket, dataEntry)
       if needsClosing:
-        needClosing.add(clientSocket)
+        needClosing.incl(clientSocket)
 
     for clientSocket in needClosing:
       let dataEntry = server.selector.getData(clientSocket)
