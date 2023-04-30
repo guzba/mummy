@@ -1069,7 +1069,7 @@ proc afterSend(
   if outgoingBuffer.bytesSent == totalBytes:
     # The current outgoing bufgfer for this socket has been fully sent
     # Remove it from the outgoing buffer queue
-    dataEntry.outgoingBuffers.shrink(1)
+    dataEntry.outgoingBuffers.shrink(fromFirst = 1)
     if outgoingBuffer.isWebSocketUpgrade:
       let websocket = WebSocket(
         server: server,
