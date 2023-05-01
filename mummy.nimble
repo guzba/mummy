@@ -1,4 +1,4 @@
-version     = "0.2.14"
+version     = "0.2.15"
 author      = "Ryan Oldenburg"
 description = "Multithreaded HTTP + WebSocket server"
 license     = "MIT"
@@ -6,5 +6,5 @@ license     = "MIT"
 srcDir = "src"
 
 requires "nim >= 1.6.8"
-requires "zippy >= 0.10.4"
+requires "zippy >= 0.10.9"
 requires "webby >= 0.1.3"
