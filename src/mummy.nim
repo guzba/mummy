@@ -6,8 +6,8 @@ when not compileOption("threads"):
 
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
-    std/parseutils, std/selectors, std/sets, std/sha1, std/strutils, std/tables,
-    std/times, webby/httpheaders, zippy
+    std/parseutils, std/random, std/selectors, std/sets, std/sha1, std/strutils,
+    std/tables, std/times, webby/httpheaders, zippy
 
 when defined(linux):
   when defined(nimdoc):
@@ -48,6 +48,7 @@ type
     remoteAddress*: string
     server: Server
     clientSocket: SocketHandle
+    clientId: uint64
     responded: bool
 
   Request* = ptr RequestObj
@@ -79,6 +80,7 @@ type
     websocketHandler: WebSocketHandler
     logHandler: LogHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
+    rand: Rand
     workerThreads: seq[Thread[(Server, int)]]
     serving, destroyCalled: Atomic[bool]
     socket: SocketHandle
@@ -118,6 +120,7 @@ type
     of EventEntry:
       event: SelectEvent
     of ClientSocketEntry:
+      clientId: uint64
       remoteAddress: string
       recvBuf: string
       bytesReceived: int
@@ -143,6 +146,7 @@ type
 
   OutgoingBuffer {.acyclic.} = ref object
     clientSocket: SocketHandle
+    clientId: uint64
     closeConnection, isWebSocketUpgrade, isCloseFrame: bool
     buffer1, buffer2: string
     bytesSent: int
@@ -312,6 +316,7 @@ proc respond*(
 
   var encodedResponse = OutgoingBuffer()
   encodedResponse.clientSocket = request.clientSocket
+  encodedResponse.clientId = request.clientId
   encodedResponse.closeConnection =
     request.httpVersion == Http10 # Default behavior
 
@@ -583,6 +588,7 @@ proc sendCloseFrame(
   closeConnection: bool
 ) {.raises: [IOSelectorsException].} =
   let outgoingBuffer = OutgoingBuffer()
+  outgoingBuffer.clientSocket = clientSocket
   outgoingBuffer.buffer1 = encodeFrameHeader(0x8, 0)
   outgoingBuffer.isCloseFrame = true
   outgoingBuffer.closeConnection = closeConnection
@@ -761,6 +767,7 @@ proc popRequest(
   result = cast[Request](allocShared0(sizeof(RequestObj)))
   result.server = server
   result.clientSocket = clientSocket
+  result.clientId = dataEntry.clientId
   result.remoteAddress = dataEntry.remoteAddress
   result.httpVersion = dataEntry.requestState.httpVersion
   result.httpMethod = move dataEntry.requestState.httpMethod
@@ -1067,9 +1074,9 @@ proc afterSend(
     outgoingBuffer = dataEntry.outgoingBuffers.peekFirst()
     totalBytes = outgoingBuffer.buffer1.len + outgoingBuffer.buffer2.len
   if outgoingBuffer.bytesSent == totalBytes:
-    # The current outgoing bufgfer for this socket has been fully sent
+    # The current outgoing buffer for this socket has been fully sent
     # Remove it from the outgoing buffer queue
-    dataEntry.outgoingBuffers.shrink(1)
+    dataEntry.outgoingBuffers.shrink(fromFirst = 1)
     if outgoingBuffer.isWebSocketUpgrade:
       let websocket = WebSocket(
         server: server,
@@ -1170,42 +1177,48 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         if encodedResponse.clientSocket in server.selector:
           let clientDataEntry =
             server.selector.getData(encodedResponse.clientSocket)
-
-          clientDataEntry.outgoingBuffers.addLast(encodedResponse)
-          server.selector.updateHandle2(
-            encodedResponse.clientSocket,
-            {Read, Write}
-          )
-
-          if encodedResponse.isWebSocketUpgrade:
-            clientDataEntry.upgradedToWebSocket = true
-            let websocket = WebSocket(
-              server: server,
-              clientSocket: encodedResponse.clientSocket
+          if encodedResponse.clientId == clientDataEntry.clientId:
+            clientDataEntry.outgoingBuffers.addLast(encodedResponse)
+            server.selector.updateHandle2(
+              encodedResponse.clientSocket,
+              {Read, Write}
             )
-            var websocketQueue = initDeque[WebSocketUpdate]()
-            withLock server.websocketQueuesLock:
-              server.websocketQueues[websocket] = move websocketQueue
-              server.websocketClaimed[websocket] = false
-            if clientDataEntry.bytesReceived > 0:
-              # Why have we received bytes when we are upgrading the connection?
-              needClosing.incl(websocket.clientSocket)
-              clientDataEntry.sendsWaitingForUpgrade.setLen(0)
-              server.log(
-                DebugLevel,
-                "Dropped WebSocket, received unexpected bytes after upgrade request"
+
+            if encodedResponse.isWebSocketUpgrade:
+              clientDataEntry.upgradedToWebSocket = true
+              let websocket = WebSocket(
+                server: server,
+                clientSocket: encodedResponse.clientSocket
               )
-              continue
-            # Are there any sends that were waiting for this response?
-            if clientDataEntry.sendsWaitingForUpgrade.len > 0:
-              for encodedFrame in clientDataEntry.sendsWaitingForUpgrade:
-                if clientDataEntry.closeFrameQueuedAt > 0:
-                  server.log(DebugLevel, "Dropped message after WebSocket close")
-                else:
-                  clientDataEntry.outgoingBuffers.addLast(encodedFrame)
-                  if encodedFrame.isCloseFrame:
-                    clientDataEntry.closeFrameQueuedAt = epochTime()
-              clientDataEntry.sendsWaitingForUpgrade.setLen(0)
+              var websocketQueue = initDeque[WebSocketUpdate]()
+              withLock server.websocketQueuesLock:
+                server.websocketQueues[websocket] = move websocketQueue
+                server.websocketClaimed[websocket] = false
+              if clientDataEntry.bytesReceived > 0:
+                # Why have we received bytes when we are upgrading the connection?
+                needClosing.incl(websocket.clientSocket)
+                clientDataEntry.sendsWaitingForUpgrade.setLen(0)
+                server.log(
+                  DebugLevel,
+                  "Dropped WebSocket, received unexpected bytes after upgrade request"
+                )
+                continue
+              # Are there any sends that were waiting for this response?
+              if clientDataEntry.sendsWaitingForUpgrade.len > 0:
+                for encodedFrame in clientDataEntry.sendsWaitingForUpgrade:
+                  if clientDataEntry.closeFrameQueuedAt > 0:
+                    server.log(DebugLevel, "Dropped message after WebSocket close")
+                  else:
+                    clientDataEntry.outgoingBuffers.addLast(encodedFrame)
+                    if encodedFrame.isCloseFrame:
+                      clientDataEntry.closeFrameQueuedAt = epochTime()
+                clientDataEntry.sendsWaitingForUpgrade.setLen(0)
+          else:
+            # Was this file descriptor reused for a different client?
+            server.log(
+              DebugLevel,
+              "TMP: outgoing buffer to client dropped, clientId mismatch"
+            )
         else:
           server.log(DebugLevel, "Dropped response to disconnected client")
 
@@ -1285,6 +1298,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           server.clientSockets.incl(clientSocket)
 
           let dataEntry = DataEntry(kind: ClientSocketEntry)
+          dataEntry.clientId = server.rand.next()
           dataEntry.remoteAddress = remoteAddress
           dataEntry.recvBuf.setLen(initialRecvBufLen)
           server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
@@ -1366,7 +1380,10 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         clientSocket.close()
         server.clientSockets.excl(clientSocket)
       if dataEntry.upgradedToWebSocket:
-        let websocket = WebSocket(server: server, clientSocket: clientSocket)
+        let websocket = WebSocket(
+          server: server,
+          clientSocket: clientSocket
+        )
         if not dataEntry.closeFrameSent:
           var error = WebSocketUpdate(event: ErrorEvent)
           websocket.postWebSocketUpdate(error)
@@ -1471,6 +1488,7 @@ proc newServer*(
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
+  result.rand = initRand()
 
   result.workerThreads.setLen(workerThreads)
 
