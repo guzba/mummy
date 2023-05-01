@@ -1215,10 +1215,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 clientDataEntry.sendsWaitingForUpgrade.setLen(0)
           else:
             # Was this file descriptor reused for a different client?
-            server.log(
-              DebugLevel,
-              "TMP: outgoing buffer to client dropped, clientId mismatch"
-            )
+            server.log(DebugLevel, "Dropped response to disconnected client")
         else:
           server.log(DebugLevel, "Dropped response to disconnected client")
 
