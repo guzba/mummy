@@ -76,7 +76,8 @@ type
     maxHeadersLen, maxBodyLen, maxMessageLen: int
     rand: Rand
     workerThreads: seq[Thread[Server]]
-    serving, destroyCalled: Atomic[bool]
+    serving: Atomic[bool]
+    destroyCalled: bool
     socket: SocketHandle
     selector: Selector[DataEntry]
     responseQueued, sendQueued, shutdown: SelectEvent
@@ -469,11 +470,10 @@ proc workerProc(server: Server) {.raises: [].} =
   while true:
     acquire(server.taskQueueLock)
 
-    while server.taskQueue.len == 0 and
-      not server.destroyCalled.load(moRelaxed):
+    while server.taskQueue.len == 0 and not server.destroyCalled:
       wait(server.taskQueueCond, server.taskQueueLock)
 
-    if server.destroyCalled.load(moRelaxed):
+    if server.destroyCalled:
       release(server.taskQueueLock)
       return
 
@@ -1022,7 +1022,8 @@ proc afterSend(
     server.selector.updateHandle2(clientSocket, {Read})
 
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
-  server.destroyCalled.store(true, moRelease)
+  withLock server.taskQueueLock:
+    server.destroyCalled = true
   if server.selector != nil:
     try:
       server.selector.close()
