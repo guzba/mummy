@@ -1007,12 +1007,6 @@ proc afterSend(
     # The current outgoing buffer for this socket has been fully sent
     # Remove it from the outgoing buffer queue
     dataEntry.outgoingBuffers.shrink(fromFirst = 1)
-    if outgoingBuffer.isWebSocketUpgrade:
-      let websocket = WebSocket(
-        server: server,
-        clientSocket: clientSocket
-      )
-      websocket.postWebSocketUpdate(WebSocketUpdate(event: OpenEvent))
     if outgoingBuffer.isCloseFrame:
       dataEntry.closeFrameSent = true
     if outgoingBuffer.closeConnection:
@@ -1113,19 +1107,10 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 server: server,
                 clientSocket: encodedResponse.clientSocket
               )
-              var websocketQueue = initDeque[WebSocketUpdate]()
               withLock server.websocketQueuesLock:
-                server.websocketQueues[websocket] = move websocketQueue
+                server.websocketQueues[websocket] = initDeque[WebSocketUpdate]()
                 server.websocketClaimed[websocket] = false
-              if clientDataEntry.bytesReceived > 0:
-                # Why have we received bytes when we are upgrading the connection?
-                needClosing.incl(websocket.clientSocket)
-                clientDataEntry.sendsWaitingForUpgrade.setLen(0)
-                server.log(
-                  DebugLevel,
-                  "Dropped WebSocket, received unexpected bytes after upgrade request"
-                )
-                continue
+              websocket.postWebSocketUpdate(WebSocketUpdate(event: OpenEvent))
               # Are there any sends that were waiting for this response?
               if clientDataEntry.sendsWaitingForUpgrade.len > 0:
                 for encodedFrame in clientDataEntry.sendsWaitingForUpgrade:
