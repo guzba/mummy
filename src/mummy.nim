@@ -339,7 +339,12 @@ proc respond*(
   # This is usually not set by the caller, however it needs to be for HEAD
   # responses where there is a Content-Length but no body
   if "Content-Length" notin headers:
-    headers["Content-Length"] = $body.len
+    if statusCode >= 100 and statusCode < 200 and body.len == 0:
+      # Do not add a Content-Length header for 1xx (Informational) responses
+      # See RFC 7230 3.3.2
+      discard
+    else:
+      headers["Content-Length"] = $body.len
 
   encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
   if encodedResponse.buffer1.len + body.len < 32 * 1024:
