@@ -4,7 +4,7 @@
 
 ![Github Actions](https://github.com/guzba/mummy/workflows/Github%20Actions/badge.svg)
 
-[API reference](https://nimdocs.com/guzba/mummy)
+[API reference](https://guzba.github.io/mummy/)
 
 Mummy is a multi-threaded HTTP 1.1 and WebSocket server written entirely in Nim.
 
