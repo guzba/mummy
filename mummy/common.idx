@@ -1,0 +1,10 @@
+MummyError	mummy/common.html#MummyError	common: MummyError	
+Http10	mummy/common.html#Http10	HttpVersion.Http10	
+Http11	mummy/common.html#Http11	HttpVersion.Http11	
+HttpVersion	mummy/common.html#HttpVersion	common: HttpVersion	
+DebugLevel	mummy/common.html#DebugLevel	LogLevel.DebugLevel	
+InfoLevel	mummy/common.html#InfoLevel	LogLevel.InfoLevel	
+ErrorLevel	mummy/common.html#ErrorLevel	LogLevel.ErrorLevel	
+LogLevel	mummy/common.html#LogLevel	common: LogLevel	
+LogHandler	mummy/common.html#LogHandler	common: LogHandler	
+echoLogger	mummy/common.html#echoLogger,LogLevel,varargs[string]	common: echoLogger(level: LogLevel; args: varargs[string])	

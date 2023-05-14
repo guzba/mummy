@@ -1,0 +1,3 @@
+currentExceptionAsMummyError	mummy/internal.html#currentExceptionAsMummyError.t	internal: currentExceptionAsMummyError(): untyped	
+encodeFrameHeader	mummy/internal.html#encodeFrameHeader,uint8,int	internal: encodeFrameHeader(opcode: uint8; payloadLen: int): string	
+encodeHeaders	mummy/internal.html#encodeHeaders,int,HttpHeaders	internal: encodeHeaders(statusCode: int; headers: HttpHeaders): string	

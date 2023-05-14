@@ -1,0 +1,28 @@
+RequestObj	mummy.html#RequestObj	mummy: RequestObj	
+Request	mummy.html#Request	mummy: Request	
+WebSocket	mummy.html#WebSocket	mummy: WebSocket	
+Message	mummy.html#Message	mummy: Message	
+OpenEvent	mummy.html#OpenEvent	WebSocketEvent.OpenEvent	
+MessageEvent	mummy.html#MessageEvent	WebSocketEvent.MessageEvent	
+ErrorEvent	mummy.html#ErrorEvent	WebSocketEvent.ErrorEvent	
+CloseEvent	mummy.html#CloseEvent	WebSocketEvent.CloseEvent	
+WebSocketEvent	mummy.html#WebSocketEvent	mummy: WebSocketEvent	
+TextMessage	mummy.html#TextMessage	MessageKind.TextMessage	
+BinaryMessage	mummy.html#BinaryMessage	MessageKind.BinaryMessage	
+Ping	mummy.html#Ping	MessageKind.Ping	
+Pong	mummy.html#Pong	MessageKind.Pong	
+MessageKind	mummy.html#MessageKind	mummy: MessageKind	
+RequestHandler	mummy.html#RequestHandler	mummy: RequestHandler	
+WebSocketHandler	mummy.html#WebSocketHandler	mummy: WebSocketHandler	
+Server	mummy.html#Server	mummy: Server	
+`$`	mummy.html#$,Request	mummy: `$`(request: Request): string	
+`$`	mummy.html#$,WebSocket	mummy: `$`(websocket: WebSocket): string	
+send	mummy.html#send,WebSocket,sinkstring	mummy: send(websocket: WebSocket; data: sink string; kind = TextMessage)	
+close	mummy.html#close,WebSocket	mummy: close(websocket: WebSocket)	
+respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	mummy: respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = &quot;&quot;)	
+upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	mummy: upgradeToWebSocket(request: Request): WebSocket	
+close	mummy.html#close,Server	mummy: close(server: Server)	
+serve	mummy.html#serve,Server,Port,string	mummy: serve(server: Server; port: Port; address = &quot;localhost&quot;)	
+newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	mummy: newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server	
+responded	mummy.html#responded,Request	mummy: responded(request: Request): bool	
+waitUntilReady	mummy.html#waitUntilReady,Server,float	mummy: waitUntilReady(server: Server; timeout: float = 10)	
