@@ -119,9 +119,11 @@ type
       closeFrameQueuedAt: float64
       upgradedToWebSocket, closeFrameSent: bool
       sendsWaitingForUpgrade: seq[OutgoingBuffer]
+      requestCounter: int # Incoming request incs, outgoing response decs
 
   IncomingRequestState = object
     headersParsed, chunked: bool
+    loggedUnexpectedData: bool
     contentLength: int
     httpVersion: HttpVersion
     httpMethod, uri: string
@@ -711,12 +713,25 @@ proc popRequest(
   result.body = move dataEntry.requestState.body
   result.body.setLen(dataEntry.requestState.contentLength)
   dataEntry.requestState = IncomingRequestState()
+  inc dataEntry.requestCounter
+  if dataEntry.bytesReceived > 0:
+    server.log(DebugLevel, "Receive buffer not empty after request")
 
 proc afterRecvHttp(
   server: Server,
   clientSocket: SocketHandle,
   dataEntry: DataEntry
 ): bool {.raises: [].} =
+  # We do not expect pipelined requests so log if any new data is received
+  # while a request is outstanding
+  if dataEntry.requestCounter > 0 and
+    not dataEntry.requestState.loggedUnexpectedData:
+    server.log(
+      DebugLevel,
+      "Received data before the previous request has been responded to"
+    )
+    dataEntry.requestState.loggedUnexpectedData = true
+
   # Have we completed parsing the headers?
   if not dataEntry.requestState.headersParsed:
     # Not done with headers yet, look for the end of the headers
@@ -947,11 +962,6 @@ proc afterRecvHttp(
       dataEntry.bytesReceived = bytesRemaining
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
-        if dataEntry.bytesReceived > 0:
-          server.log(
-            DebugLevel,
-            "Receive buffer not empty after chunked request"
-          )
         let request = server.popRequest(clientSocket, dataEntry)
         server.postTask(WorkerTask(request: request))
   else:
@@ -989,9 +999,6 @@ proc afterRecvHttp(
           bytesRemaining
         )
         dataEntry.bytesReceived = bytesRemaining
-
-    if dataEntry.bytesReceived > 0:
-      server.log(DebugLevel, "Receive buffer not empty after request")
 
     let request = server.popRequest(clientSocket, dataEntry)
     server.postTask(WorkerTask(request: request))
@@ -1113,6 +1120,9 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
               encodedResponse.clientSocket,
               {Read, Write}
             )
+
+            clientDataEntry.requestCounter =
+              max(clientDataEntry.requestCounter - 1, 0)
 
             if encodedResponse.isWebSocketUpgrade:
               clientDataEntry.upgradedToWebSocket = true
