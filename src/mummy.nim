@@ -1152,7 +1152,6 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         if encodedFrame.clientSocket in server.selector:
           let clientDataEntry =
             server.selector.getData(encodedFrame.clientSocket)
-
           # Have we sent the upgrade response yet?
           if clientDataEntry.upgradedToWebSocket:
             if clientDataEntry.closeFrameQueuedAt > 0:
