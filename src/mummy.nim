@@ -838,22 +838,26 @@ proc afterRecvHttp(
         "Transfer-Encoding", "chunked"
       )
 
-    # If this is a chunked request ignore any Content-Length headers
-    if not dataEntry.requestState.chunked:
-      var foundContentLength: bool
-      for (k, v) in dataEntry.requestState.headers:
-        if cmpIgnoreCase(k, "Content-Length") == 0:
-          if foundContentLength:
-            # This is a second Content-Length header, not valid
-            return true # Close the connection
-          foundContentLength = true
-          try:
-            dataEntry.requestState.contentLength = parseInt(v)
-          except:
-            return true # Parsing Content-Length failed, close the connection
+    var foundContentLength: bool
+    for (k, v) in dataEntry.requestState.headers:
+      if cmpIgnoreCase(k, "Content-Length") == 0:
+        if foundContentLength:
+          # This is a second Content-Length header, not valid
+          return true # Close the connection
+        foundContentLength = true
+        if dataEntry.requestState.chunked:
+          server.log(
+            DebugLevel,
+            "Found both Transfer-Encoding: chunked and Content-Length headers"
+          )
+          return true # Close the connection
+        try:
+          dataEntry.requestState.contentLength = parseInt(v)
+        except:
+          return true # Parsing Content-Length failed, close the connection
 
-      if dataEntry.requestState.contentLength < 0:
-        return true # Invalid Content-Length, close the connection
+    if dataEntry.requestState.contentLength < 0:
+      return true # Invalid Content-Length, close the connection
 
     # Remove the headers from the receive buffer
     # We do this so we can hopefully just move the receive buffer at the end
@@ -946,6 +950,11 @@ proc afterRecvHttp(
       dataEntry.bytesReceived = bytesRemaining
 
       if chunkLen == 0: # A chunk of len 0 marks the end of the request body
+        if dataEntry.bytesReceived > 0:
+          server.log(
+            DebugLevel,
+            "Receive buffer not empty after chunked request"
+          )
         let request = server.popRequest(clientSocket, dataEntry)
         server.postTask(WorkerTask(request: request))
   else:
@@ -968,8 +977,7 @@ proc afterRecvHttp(
         dataEntry.bytesReceived = 0
       else:
         # Copy the body out of the buffer
-        dataEntry.requestState.body.setLen(
-            dataEntry.requestState.contentLength)
+        dataEntry.requestState.body.setLen(dataEntry.requestState.contentLength)
         copyMem(
           dataEntry.requestState.body[0].addr,
           dataEntry.recvBuf[0].addr,
@@ -984,6 +992,9 @@ proc afterRecvHttp(
           bytesRemaining
         )
         dataEntry.bytesReceived = bytesRemaining
+
+    if dataEntry.bytesReceived > 0:
+      server.log(DebugLevel, "Receive buffer not empty after request")
 
     let request = server.popRequest(clientSocket, dataEntry)
     server.postTask(WorkerTask(request: request))
