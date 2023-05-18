@@ -846,10 +846,7 @@ proc afterRecvHttp(
           return true # Close the connection
         foundContentLength = true
         if dataEntry.requestState.chunked:
-          server.log(
-            DebugLevel,
-            "Found both Transfer-Encoding: chunked and Content-Length headers"
-          )
+          # Found both Transfer-Encoding: chunked and Content-Length headers
           return true # Close the connection
         try:
           dataEntry.requestState.contentLength = parseInt(v)
