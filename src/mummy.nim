@@ -294,6 +294,12 @@ proc respond*(
   ## Sends the response for the request.
   ## This should usually only be called once per request.
 
+  if request.responded:
+    request.server.log(
+      InfoLevel,
+      "Responding to a request that has already received a non-1xx response"
+    )
+
   var encodedResponse = OutgoingBuffer()
   encodedResponse.clientSocket = request.clientSocket
   encodedResponse.clientId = request.clientId
@@ -360,7 +366,9 @@ proc respond*(
     "websocket"
   )
 
-  request.responded = true
+  if statusCode < 100 or statusCode >= 200:
+    # Mark if this request has received a non-informational (1xx) response
+    request.responded = true
 
   var queueWasEmpty: bool
   withLock request.server.responseQueueLock:
@@ -1457,7 +1465,8 @@ proc newServer*(
     raise currentExceptionAsMummyError()
 
 proc responded*(request: Request): bool =
-  ## Check if this request has been responded to.
+  ## Check if this request has been responded.
+  ## Informational responses (1xx status codes) do not mark a request responded.
   # This is only safe to call on the request handler thread right now, improve?
   request.responded
 
