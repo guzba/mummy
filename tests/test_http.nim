@@ -26,6 +26,7 @@ proc handler(request: Request) =
       request.respond(405)
   else:
     request.respond(404)
+  doAssert request.responded == true
 
 let server = newServer(handler)
 
