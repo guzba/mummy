@@ -802,20 +802,21 @@ proc afterRecvHttp(
         let httpVersionLen = lineLen - (space2 + 1 - lineStart)
         if httpVersionLen != 8:
           return true # Invalid request line, close the connection
-        if equalMem(
-          dataEntry.recvBuf[space2 + 1].addr,
-          http11[0].unsafeAddr,
-          8
-        ):
-          dataEntry.requestState.httpVersion = Http11
-        elif equalMem(
-          dataEntry.recvBuf[space2 + 1].addr,
-          http10[0].unsafeAddr,
-          8
-        ):
-          dataEntry.requestState.httpVersion = Http10
-        else:
-          return true # Unsupported HTTP version, close the connection
+        {.gcsafe.}:
+          if equalMem(
+            dataEntry.recvBuf[space2 + 1].addr,
+            http11[0].unsafeAddr,
+            8
+          ):
+            dataEntry.requestState.httpVersion = Http11
+          elif equalMem(
+            dataEntry.recvBuf[space2 + 1].addr,
+            http10[0].unsafeAddr,
+            8
+          ):
+            dataEntry.requestState.httpVersion = Http10
+          else:
+            return true # Unsupported HTTP version, close the connection
       else: # This is a header
         let splitAt = dataEntry.recvBuf.find(
           ':',
