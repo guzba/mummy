@@ -13,8 +13,11 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
   template raiseInvalidContentType() =
     raise newException(MummyError, "Invalid Content-Type header for multipart")
 
-  template raiseInvalidBody() =
-    raise newException(MummyError, "Invalid multipart body")
+  template raiseInvalidBody(extra = "") =
+    var msg = "Invalid multipart body"
+    if extra != "":
+      msg &= ", " & extra
+    raise newException(MummyError, move msg)
 
   let first = request.headers["Content-Type"].split(';', maxsplit = 1)
 
@@ -45,7 +48,7 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
 
     # Ensure we have room for a boundary line
     if i + realBoundary.len + 2 > request.body.len:
-      raiseInvalidBody()
+      raiseInvalidBody("no room for boundary line")
 
     # Each entry must start with a boundary
     if not equalMem(
@@ -53,7 +56,7 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
       realBoundary.cstring,
       realBoundary.len
     ):
-      raiseInvalidBody()
+      raiseInvalidBody("entry does not start with boundary")
 
     i += realBoundary.len
 
@@ -68,13 +71,13 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
         if request.body[i] == '\r' and request.body[i + 1] == '\n':
           break
       # Something is wrong
-      raiseInvalidBody()
+      raiseInvalidBody("error with multipart body end marker")
 
     # This is a multipart entry
 
     # Ensure the boundary line ends with \r\n
     if request.body[i] != '\r' or request.body[i + 1] != '\n':
-      raiseInvalidBody()
+      raiseInvalidBody("boundary line does not end with \\r\\n")
 
     i += 2
 
@@ -82,7 +85,7 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
       while true:
         let lineEnd = request.body.find("\r\n", start = i)
         if lineEnd == -1:
-          raiseInvalidBody()
+          raiseInvalidBody("header line does not end with \\r\\n")
 
         if lineEnd == i:
           # No more headers
@@ -105,7 +108,7 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
 
     let nextBoundary = request.body.find(realBoundary, start = i)
     if nextBoundary == -1:
-      raiseInvalidBody()
+      raiseInvalidBody("entry missing next boundary")
 
     let
       start = i
@@ -118,11 +121,11 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
       discard
     else:
       # Something wrong here
-      raiseInvalidBody()
+      raiseInvalidBody("entry data multipart end error")
 
     # Verify the \r\n after the entry data
     if request.body[last + 1] != '\r' or request.body[last + 2] != '\n':
-      raiseInvalidBody()
+      raiseInvalidBody("entry data does not end with \\r\\n")
 
     i = nextBoundary
 
