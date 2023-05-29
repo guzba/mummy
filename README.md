@@ -25,6 +25,11 @@ The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
 * [Mummy in Production #1](https://forum.nim-lang.org/t/9902) - 500+ HTTP requests per second on a small VM, very light use of CPU+RAM
 * [Mummy in Production #2](https://forum.nim-lang.org/t/10066) - 100k concurrent WebSocket connections, room for 1M+
 
+## Other libraries built to work with Mummy
+
+* [Curly](https://github.com/guzba/curly/) - Makes using libcurl efficiently easy, great for HTTP RPC.
+* [Ready](https://github.com/guzba/ready) - A Redis client for multi-threaded servers.
+
 ## How is Mummy different?
 
 Mummy operates with this basic model: handle all socket IO on one thread and dispatch incoming HTTP requests and WebSocket events to a pool of worker threads. Your HTTP handlers probably won't even need to think about threads at all.
