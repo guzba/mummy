@@ -325,7 +325,7 @@ proc respond*(
     headers["Connection"] = "keep-alive"
 
   # If the body is big enough to justify compressing and not already compressed
-  if body.len > 128 and "Content-Encoding" notin headers:
+  if body.len > 860 and "Content-Encoding" notin headers:
     if request.headers.headerContainsToken("Accept-Encoding", "gzip"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfGzip)
@@ -333,14 +333,20 @@ proc respond*(
       except:
         # This should never happen since exceptions are only thrown if
         # the data format is invalid or the level is invalid
-        discard
+        request.server.log(
+          DebugLevel,
+          "Unexpected gzip error: " & getCurrentExceptionMsg()
+        )
     elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
         headers["Content-Encoding"] = "deflate"
       except:
         # See gzip
-        discard
+        request.server.log(
+          DebugLevel,
+          "Unexpected deflate error: " & getCurrentExceptionMsg()
+        )
     else:
       discard
 
@@ -412,8 +418,10 @@ proc upgradeToWebSocket*(
 
   # Looks good to upgrade
 
-  result.server = request.server
-  result.clientSocket = request.clientSocket
+  result = WebSocket(
+    server: request.server,
+    clientSocket: request.clientSocket
+  )
 
   let hash =
     secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
@@ -423,7 +431,7 @@ proc upgradeToWebSocket*(
   headers["Upgrade"] = "websocket"
   headers["Sec-WebSocket-Accept"] = base64.encode(hash)
 
-  request.respond(101, headers, "")
+  request.respond(101, headers)
 
 proc workerProc(server: Server) {.raises: [].} =
   # The worker threads run the task queue here

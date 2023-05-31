@@ -14,7 +14,7 @@ proc handler(request: Request) =
       var headers: mummy.HttpHeaders
       headers["Content-Type"] = "text/plain"
       var body: string
-      for i in 0 ..< 10:
+      for i in 0 ..< 100:
         body &= "abcdefghijklmnopqrstuvwxyz"
       request.respond(200, headers, body)
     else:
