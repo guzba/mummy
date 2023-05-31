@@ -400,9 +400,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 Cleanly stops and deallocates the server. In-flight request handler calls will be allowed to finish. No additional handler calls will be dispatched even if they are queued.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1329"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1337"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1329" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1337" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -430,9 +430,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 Creates a new HTTP server. The request handler will be called for incoming HTTP requests. The WebSocket handler will be called for WebSocket events. Calls to the HTTP, WebSocket and log handlers are made from worker threads. WebSocket events are dispatched serially per connection. This means your WebSocket handler must return from a call before the next call will be dispatched for the same connection.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1405"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1413"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1405" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1413" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -456,9 +456,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 Check if this request has been responded. Informational responses (1xx status codes) do not mark a request responded.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1468"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1476"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1468" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1476" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -483,9 +483,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 The server will serve on the address and port. The default address is localhost. Use &quot;0.0.0.0&quot; or &quot;::&quot; to make the server externally accessible (with caution).  Listening on IPv6 isn't currently possible on Windows. This call does not return unless server.close() is called from another thread.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1338"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1346"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1338" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1346" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -496,9 +496,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 Upgrades the request to a WebSocket connection. You can immediately start calling send().
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L381"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L387"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L381" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L387" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -509,9 +509,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 This proc blocks until the server is ready to receive requests or the timeout has passed. The timeout is in floating point seconds. This is useful when writing tests, where you need to know the server is ready before you begin sending requests. If the server is already ready this returns immediately.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1474"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1482"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1474" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1482" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -530,7 +530,7 @@ class="link-seesrc" target="_blank">Source</a>
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br/>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2023-05-31 21:04:45 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2023-05-31 22:09:52 UTC</small>
       </div>
     </div>
   </div>
