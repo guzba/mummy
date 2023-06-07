@@ -1350,8 +1350,7 @@ proc serve*(
 ) {.raises: [MummyError].} =
   ## The server will serve on the address and port. The default address is
   ## localhost. Use "0.0.0.0" or "::" to make the server externally
-  ## accessible (with caution).  Listening on IPv6 isn't currently
-  ## possible on Windows.
+  ## accessible (with caution).
   ## This call does not return unless server.close() is called from another
   ## thread.
 
@@ -1359,12 +1358,7 @@ proc serve*(
     raise newException(MummyError, "Server already has a socket")
 
   try:
-    # Listening on IPv6 isn't working on Windows so fallback to IPv4 until
-    # the problem is identified and fixed.
-    when defined(windows):
-      const domainType = Domain.AF_INET
-    else:
-      const domainType = Domain.AF_UNSPEC
+    let domainType = if address == "localhost": Domain.AF_INET else: Domain.AF_UNSPEC
 
     let ai = getAddrInfo(
       address,
