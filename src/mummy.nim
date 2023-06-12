@@ -50,6 +50,7 @@ type
   WebSocket* = object
     server: Server
     clientSocket: SocketHandle
+    clientId: uint64
 
   Message* = object
     kind*: MessageKind
@@ -245,6 +246,7 @@ proc send*(
 
   var encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
+  encodedFrame.clientId = websocket.clientId
 
   case kind:
   of TextMessage:
@@ -274,6 +276,7 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
 
   var encodedFrame = OutgoingBuffer()
   encodedFrame.clientSocket = websocket.clientSocket
+  encodedFrame.clientId = websocket.clientId
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
   encodedFrame.isCloseFrame = true
 
@@ -420,7 +423,8 @@ proc upgradeToWebSocket*(
 
   result = WebSocket(
     server: request.server,
-    clientSocket: request.clientSocket
+    clientSocket: request.clientSocket,
+    clientId: request.clientId
   )
 
   let hash =
@@ -542,6 +546,7 @@ proc sendCloseFrame(
 ) {.raises: [IOSelectorsException].} =
   let outgoingBuffer = OutgoingBuffer()
   outgoingBuffer.clientSocket = clientSocket
+  outgoingBuffer.clientId = dataEntry.clientId
   outgoingBuffer.buffer1 = encodeFrameHeader(0x8, 0)
   outgoingBuffer.isCloseFrame = true
   outgoingBuffer.closeConnection = closeConnection
@@ -703,7 +708,8 @@ proc afterRecvWebSocket(
       let
         websocket = WebSocket(
           server: server,
-          clientSocket: clientSocket
+          clientSocket: clientSocket,
+          clientId: dataEntry.clientId
         )
         update = WebSocketUpdate(
           event: MessageEvent,
@@ -1145,7 +1151,8 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
               clientDataEntry.upgradedToWebSocket = true
               let websocket = WebSocket(
                 server: server,
-                clientSocket: encodedResponse.clientSocket
+                clientSocket: encodedResponse.clientSocket,
+                clientId: encodedResponse.clientId
               )
               withLock server.websocketQueuesLock:
                 server.websocketQueues[websocket] = initDeque[WebSocketUpdate]()
@@ -1179,21 +1186,25 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         if encodedFrame.clientSocket in server.selector:
           let clientDataEntry =
             server.selector.getData(encodedFrame.clientSocket)
-          # Have we sent the upgrade response yet?
-          if clientDataEntry.upgradedToWebSocket:
-            if clientDataEntry.closeFrameQueuedAt > 0:
-              server.log(DebugLevel, "Dropped message after WebSocket close")
+          if encodedFrame.clientId == clientDataEntry.clientId:
+            # Have we sent the upgrade response yet?
+            if clientDataEntry.upgradedToWebSocket:
+              if clientDataEntry.closeFrameQueuedAt > 0:
+                server.log(DebugLevel, "Dropped message after WebSocket close")
+              else:
+                clientDataEntry.outgoingBuffers.addLast(encodedFrame)
+                if encodedFrame.isCloseFrame:
+                  clientDataEntry.closeFrameQueuedAt = epochTime()
+                server.selector.updateHandle2(
+                  encodedFrame.clientSocket,
+                  {Read, Write}
+                )
             else:
-              clientDataEntry.outgoingBuffers.addLast(encodedFrame)
-              if encodedFrame.isCloseFrame:
-                clientDataEntry.closeFrameQueuedAt = epochTime()
-              server.selector.updateHandle2(
-                encodedFrame.clientSocket,
-                {Read, Write}
-              )
+              # If we haven't, queue this to wait for the upgrade response
+              clientDataEntry.sendsWaitingForUpgrade.add(encodedFrame)
           else:
-            # If we haven't, queue this to wait for the upgrade response
-            clientDataEntry.sendsWaitingForUpgrade.add(encodedFrame)
+            # Was this file descriptor reused for a different client?
+            server.log(DebugLevel, "Dropped message to disconnected client")
         else:
           server.log(DebugLevel, "Dropped message to disconnected client")
 
@@ -1326,7 +1337,8 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
       if dataEntry.upgradedToWebSocket:
         let websocket = WebSocket(
           server: server,
-          clientSocket: clientSocket
+          clientSocket: clientSocket,
+          clientId: dataEntry.clientId
         )
         if not dataEntry.closeFrameSent:
           var error = WebSocketUpdate(event: ErrorEvent)
