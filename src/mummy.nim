@@ -7,7 +7,7 @@ when not compileOption("threads"):
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/random, std/selectors, std/sets, std/sha1, std/strutils,
-    std/tables, std/times, webby/httpheaders, zippy
+    std/tables, std/times, webby/httpheaders, zippy, std/options
 
 when defined(linux):
   when defined(nimdoc):
@@ -143,7 +143,7 @@ type
     buffer1, buffer2: string
     bytesSent: int
 
-  WebSocketUpdate {.acyclic.} = ref object
+  WebSocketUpdate = object
     event: WebSocketEvent
     message: Message
 
@@ -465,12 +465,12 @@ proc workerProc(server: Server) {.raises: [].} =
         server.websocketClaimed[task.websocket] = true
 
       while true: # Process the entire websocket queue
-        var update: WebSocketUpdate
+        var update: Option[WebSocketUpdate]
         withLock server.websocketQueuesLock:
           try:
             if server.websocketQueues[task.websocket].len > 0:
-              update = server.websocketQueues[task.websocket].popFirst()
-              if update.event == CloseEvent:
+              update = some(server.websocketQueues[task.websocket].popFirst())
+              if update.get.event == CloseEvent:
                 server.websocketQueues.del(task.websocket)
                 server.websocketClaimed.del(task.websocket)
             else:
@@ -478,20 +478,20 @@ proc workerProc(server: Server) {.raises: [].} =
           except KeyError:
             discard # Not possible
 
-        if update == nil:
+        if not update.isSome:
           break
 
         try:
           server.websocketHandler(
             task.websocket,
-            update.event,
-            move update.message
+            update.get.event,
+            move update.get.message
           )
         except:
           let e = getCurrentException()
           server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
 
-        if update.event == CloseEvent:
+        if update.get.event == CloseEvent:
           break
 
   while true:
@@ -516,7 +516,7 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
-  update: WebSocketUpdate
+  update: sink WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
     websocket.server.log(DebugLevel, "WebSocket event but no WebSocket handler")
@@ -529,7 +529,7 @@ proc postWebSocketUpdate(
       return
 
     try:
-      websocket.server.websocketQueues[websocket].addLast(update)
+      websocket.server.websocketQueues[websocket].addLast(move update)
       if not websocket.server.websocketClaimed[websocket]:
         needsTask = true
     except KeyError:
