@@ -432,9 +432,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 Creates a new HTTP server. The request handler will be called for incoming HTTP requests. The WebSocket handler will be called for WebSocket events. Calls to the HTTP, WebSocket and log handlers are made from worker threads. WebSocket events are dispatched serially per connection. This means your WebSocket handler must return from a call before the next call will be dispatched for the same connection.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1425"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1417"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1425" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1417" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -458,9 +458,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 Check if this request has been responded. Informational responses (1xx status codes) do not mark a request responded.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1488"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1480"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1488" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1480" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -483,7 +483,7 @@ class="link-seesrc" target="_blank">Source</a>
     <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Identifier">WriteIOEffect</span><span class="Other">,</span> <span class="Identifier">ReadIOEffect</span><span class="Other">,</span> <span class="Identifier">RootEffect</span><span class="Other">,</span> <span class="Identifier">TimeEffect</span><span class="Other">]</span></span>.}</pre></dt>
 <dd>
 
-The server will serve on the address and port. The default address is localhost. Use &quot;0.0.0.0&quot; or &quot;::&quot; to make the server externally accessible (with caution).  Listening on IPv6 isn't currently possible on Windows. This call does not return unless server.close() is called from another thread.
+The server will serve on the address and port. The default address is localhost. Use &quot;0.0.0.0&quot; to make the server externally accessible (with caution). This call does not return unless server.close() is called from another thread.
 &nbsp;&nbsp;<a
 href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1358"
 class="link-seesrc" target="_blank">Source</a>
@@ -511,9 +511,9 @@ class="link-seesrc" target="_blank">Source</a>
 
 This proc blocks until the server is ready to receive requests or the timeout has passed. The timeout is in floating point seconds. This is useful when writing tests, where you need to know the server is ready before you begin sending requests. If the server is already ready this returns immediately.
 &nbsp;&nbsp;<a
-href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1494"
+href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1486"
 class="link-seesrc" target="_blank">Source</a>
-&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1494" class="link-seesrc" target="_blank" >Edit</a>
+&nbsp;&nbsp;<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1486" class="link-seesrc" target="_blank" >Edit</a>
 
 </dd>
 </div>
@@ -532,7 +532,7 @@ class="link-seesrc" target="_blank">Source</a>
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br/>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2023-06-12 17:26:45 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2023-06-13 18:49:24 UTC</small>
       </div>
     </div>
   </div>
