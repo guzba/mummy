@@ -1385,19 +1385,20 @@ proc serve*(
       SockType.SOCK_STREAM,
       Protocol.IPPROTO_TCP,
     )
+
+    server.socket = createNativeSocket(
+      ai.ai_family,
+      ai.ai_socktype,
+      ai.ai_protocol,
+      false
+    )
+    if server.socket == osInvalidSocket:
+      raiseOSError(osLastError())
+
+    server.socket.setBlocking(false)
+    server.socket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
+
     try:
-      server.socket = createNativeSocket(
-        ai.ai_family,
-        ai.ai_socktype,
-        ai.ai_protocol,
-        false
-      )
-      if server.socket == osInvalidSocket:
-        raiseOSError(osLastError())
-
-      server.socket.setBlocking(false)
-      server.socket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
-
       if bindAddr(server.socket, ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
         raiseOSError(osLastError())
     finally:
