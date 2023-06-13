@@ -53,7 +53,7 @@ var requesterThread: Thread[void]
 proc requesterProc() =
   server.waitUntilReady()
 
-  let ws = newWebSocket("ws://localhost:8081")
+  let ws = newWebSocket("ws://127.0.0.1:8081")
   doAssert ws.receiveMessage() ==
     some(whisky.Message(kind: whisky.TextMessage, data: "First"))
   doAssert ws.receiveMessage() ==
