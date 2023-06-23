@@ -393,7 +393,7 @@ proc upgradeToWebSocket*(
   ## Upgrades the request to a WebSocket connection. You can immediately start
   ## calling send().
 
-  if not request.headers.headerContainsToken("Connection", "upgrade"):
+  if not request.headers.headerContainsToken("Connection", "Upgrade"):
     raise newException(
       MummyError,
       "Invalid request to upgade, missing 'Connection: upgrade' header"
@@ -431,7 +431,7 @@ proc upgradeToWebSocket*(
     secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
 
   var headers: HttpHeaders
-  headers["Connection"] = "upgrade"
+  headers["Connection"] = "Upgrade"
   headers["Upgrade"] = "websocket"
   headers["Sec-WebSocket-Accept"] = base64.encode(hash)
 

@@ -40,8 +40,13 @@ proc encodeHeaders*(
   headers: HttpHeaders
 ): string {.raises: [], gcsafe.} =
   let
-    statusCode = $statusCode
-    statusLineLen = 9 + statusCode.len + 2
+    status =
+      case statusCode:
+      of 101:
+        $statusCode & " Switching Protocols"
+      else:
+        $statusCode
+    statusLineLen = 9 + status.len + 2
 
   # Calculate the header buffer len in advance to just do one allocation
   var headersLen = statusLineLen
@@ -65,10 +70,10 @@ proc encodeHeaders*(
   var pos = 9
   copyMem(
     result[pos].addr,
-    statusCode[0].unsafeAddr,
-    statusCode.len
+    status[0].unsafeAddr,
+    status.len
   )
-  pos += statusCode.len
+  pos += status.len
 
   result[pos + 0] = '\r'
   result[pos + 1] = '\n'
