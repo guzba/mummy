@@ -1,10 +1,11 @@
-MummyError	mummy/common.html#MummyError	common: MummyError	
-Http10	mummy/common.html#Http10	HttpVersion.Http10	
-Http11	mummy/common.html#Http11	HttpVersion.Http11	
-HttpVersion	mummy/common.html#HttpVersion	common: HttpVersion	
-DebugLevel	mummy/common.html#DebugLevel	LogLevel.DebugLevel	
-InfoLevel	mummy/common.html#InfoLevel	LogLevel.InfoLevel	
-ErrorLevel	mummy/common.html#ErrorLevel	LogLevel.ErrorLevel	
-LogLevel	mummy/common.html#LogLevel	common: LogLevel	
-LogHandler	mummy/common.html#LogHandler	common: LogHandler	
-echoLogger	mummy/common.html#echoLogger,LogLevel,varargs[string]	common: echoLogger(level: LogLevel; args: varargs[string])	
+nimTitle	common	mummy/common.html	module src/mummy/common		0
+nim	MummyError	mummy/common.html#MummyError	object MummyError		2
+nim	Http10	mummy/common.html#Http10	HttpVersion.Http10		4
+nim	Http11	mummy/common.html#Http11	HttpVersion.Http11		4
+nim	HttpVersion	mummy/common.html#HttpVersion	enum HttpVersion		4
+nim	DebugLevel	mummy/common.html#DebugLevel	LogLevel.DebugLevel		7
+nim	InfoLevel	mummy/common.html#InfoLevel	LogLevel.InfoLevel		7
+nim	ErrorLevel	mummy/common.html#ErrorLevel	LogLevel.ErrorLevel		7
+nim	LogLevel	mummy/common.html#LogLevel	enum LogLevel		7
+nim	LogHandler	mummy/common.html#LogHandler	type LogHandler		10
+nim	echoLogger	mummy/common.html#echoLogger,LogLevel,varargs[string]	proc echoLogger(level: LogLevel; args: varargs[string])		12
