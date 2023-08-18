@@ -19,7 +19,17 @@ proc decodeMultipart*(request: Request): seq[MultipartEntry] {.raises: [MummyErr
       msg &= ", " & extra
     raise newException(MummyError, move msg)
 
-  let first = request.headers["Content-Type"].split(';', maxsplit = 1)
+  var contentType = request.headers["Content-Type"]
+
+  # Wolfram HTTPClient in Wolfram Language uses a comma instead of
+  # a semicolon: multipart/form-data, boundary=vTd41rxm1e7O
+  if request.headers["User-Agent"].startsWith("Wolfram HTTPClient"):
+    contentType = contentType.replace(
+      "multipart/form-data,",
+      "multipart/form-data;"
+    )
+
+  let first = contentType.split(';', maxsplit = 1)
 
   if cmpIgnoreCase(first[0], "multipart/form-data") != 0 or first.len != 2:
     raiseInvalidContentType()
