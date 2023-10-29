@@ -1,4 +1,4 @@
 nimTitle	internal	mummy/internal.html	module src/mummy/internal		0
 nim	currentExceptionAsMummyError	mummy/internal.html#currentExceptionAsMummyError.t	template currentExceptionAsMummyError(): untyped		3
 nim	encodeFrameHeader	mummy/internal.html#encodeFrameHeader,uint8,int	proc encodeFrameHeader(opcode: uint8; payloadLen: int): string		7
-nim	encodeHeaders	mummy/internal.html#encodeHeaders,int,HttpHeaders	proc encodeHeaders(statusCode: int; headers: HttpHeaders): string		38
+nim	encodeHeaders	mummy/internal.html#encodeHeaders,int,HttpHeaders	proc encodeHeaders(statusCode: int; headers: HttpHeaders): string		39
