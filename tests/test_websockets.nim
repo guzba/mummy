@@ -39,7 +39,10 @@ proc websocketHandler(
       doAssert message.data == ""
     of mummy.Pong:
       doAssert false
-    websocket.send("Fifth", mummy.BinaryMessage)
+    var fifth: string
+    for i in 0 ..< 0xffff + 1:
+      fifth.add 'a'
+    websocket.send(fifth, mummy.BinaryMessage)
   of ErrorEvent:
     discard
   of CloseEvent:
@@ -61,8 +64,9 @@ proc requesterProc() =
   ws.send("Third")
   ws.send("Fourth", whisky.BinaryMessage)
   ws.send("", whisky.Ping)
-  doAssert ws.receiveMessage() ==
-    some(whisky.Message(kind: whisky.BinaryMessage, data: "Fifth"))
+  let fifth = ws.receiveMessage()
+  doAssert fifth.get.kind == whisky.BinaryMessage
+  doAssert fifth.get.data.len == 0xffff + 1
   ws.close()
 
   echo "Done, shut down the server"

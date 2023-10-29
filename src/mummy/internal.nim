@@ -1,4 +1,4 @@
-import common, std/nativesockets, webby/httpheaders
+import common, std/nativesockets, webby/httpheaders, std/endians
 
 template currentExceptionAsMummyError*(): untyped =
   let e = getCurrentException()
@@ -31,9 +31,10 @@ proc encodeFrameHeader*(
     copyMem(result[result.len - 2].addr, l.addr, 2)
   else:
     result.add 127.char
-    var l = cast[uint32](payloadLen).htonl
+    var l: uint64
+    bigEndian64(l.addr, payloadLen.unsafeAddr)
     result.setLen(result.len + 8)
-    copyMem(result[result.len - 4].addr, l.addr, 4)
+    copyMem(result[result.len - 8].addr, l.addr, 8)
 
 proc encodeHeaders*(
   statusCode: int,
