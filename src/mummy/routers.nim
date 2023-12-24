@@ -9,7 +9,7 @@ type
       ## Called when the HTTP method is not registered for the route
     errorHandler*: RequestErrorHandler
       ## Called when the route request handler raises an Exception
-    routes: seq[Route]
+    routes*: seq[Route]
 
   RequestErrorHandler* = proc(request: Request, e: ref Exception) {.gcsafe.}
 
