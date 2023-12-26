@@ -9,14 +9,14 @@ import mummy, mummy/routers, std/strutils, waterpark/sqlite
 let db = newSqlitePool(10, "example.sqlite3")
 
 # For example purposes, set up a dummy table
-db.withConnnection conn:
+db.withConnection conn:
   conn.exec(sql"create table if not exists table1(id primary key, count int)")
   conn.exec(sql"insert or replace into table1 values (0, 0)")
 
 # A request to /get will return the count
 proc getHandler(request: Request) =
   var count: int
-  db.withConnnection conn:
+  db.withConnection conn:
     count = parseInt(conn.getValue(sql"select count from table1 limit 1"))
 
   var headers: HttpHeaders
@@ -25,7 +25,7 @@ proc getHandler(request: Request) =
 
 # A request to /inc will increase the count by 1
 proc incHandler(request: Request) =
-  db.withConnnection conn:
+  db.withConnection conn:
     conn.exec(sql"update table1 set count = count + 1")
 
   var headers: HttpHeaders

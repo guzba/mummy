@@ -1,15 +1,15 @@
-##
-## How to handle not found requests. Same concept can be used for
-## `methodNotAllowedHandler` and `errorHandler` (found in `mummy/routers`).
-##
-
 import mummy, mummy/routers
 
-proc customNotFound(request: Request) =
+## This example shows how to return a custom response for requests
+## that do not have a matching route (return a 404).
+## The same idea can be used for `methodNotAllowedHandler` (405) and
+## `errorHandler` (500) responses.
+
+proc custom404(request: Request) =
   ## This is a custom 404 handler
   const body = "<h1>I'm not here</h1>"
 
-  var headers: httpheaders.HttpHeaders
+  var headers: HttpHeaders
   headers["Content-Type"] = "text/html"
 
   if request.httpMethod == "HEAD":
@@ -18,7 +18,6 @@ proc customNotFound(request: Request) =
   else:
     request.respond(404, headers, body)
 
-
 proc indexHandler(request: Request) =
   var headers: HttpHeaders
   headers["Content-Type"] = "text/plain"
@@ -26,8 +25,8 @@ proc indexHandler(request: Request) =
 
 var router: Router
 
-# Custom not found handler
-router.notFoundHandler = customNotFound
+# Custom 404 handler
+router.notFoundHandler = custom404
 
 # Normal routes
 router.get("/", indexHandler)
