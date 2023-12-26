@@ -181,15 +181,12 @@ proc pathParts(uri: string): seq[string] =
   # The URI path is assumed to end at the first ? & #
   var
     a = uri.find('?')
-    b = uri.find('&')
-    c = uri.find('#')
+    b = uri.find('#')
   var len = uri.len
   if a != -1:
     len = min(len, a)
   if b != -1:
     len = min(len, b)
-  if c != -1:
-    len = min(len, c)
 
   if len != uri.len:
     result = uri[0 ..< len].split('/')
