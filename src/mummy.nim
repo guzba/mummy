@@ -13,9 +13,9 @@ import mummy/common, mummy/internal, std/atomics, std/base64,
 when defined(linux):
   when defined(nimdoc):
     # Why am I doing this?
-    from posix import write, TPollfd, POLLIN, poll, close, EAGAIN, O_CLOEXEC, O_NONBLOCK
+    from std/posix import write, TPollfd, POLLIN, poll, close, EAGAIN, O_CLOEXEC, O_NONBLOCK
   else:
-    import posix
+    import std/posix
 
   let SOCK_NONBLOCK
     {.importc: "SOCK_NONBLOCK", header: "<sys/socket.h>".}: cint
