@@ -1290,7 +1290,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 readyKey.fd.SocketHandle.send(
                   outgoingBuffer.buffer1[outgoingBuffer.bytesSent].addr,
                   (outgoingBuffer.buffer1.len - outgoingBuffer.bytesSent).cint,
-                  0
+                  when defined(MSG_NOSIGNAL): MSG_NOSIGNAL else: 0
                 )
               else:
                 let buffer2Pos =
@@ -1298,7 +1298,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 readyKey.fd.SocketHandle.send(
                   outgoingBuffer.buffer2[buffer2Pos].addr,
                   (outgoingBuffer.buffer2.len - buffer2Pos).cint,
-                  0
+                  when defined(MSG_NOSIGNAL): MSG_NOSIGNAL else: 0
                 )
           if bytesSent > 0:
             outgoingBuffer.bytesSent += bytesSent
