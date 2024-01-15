@@ -393,7 +393,10 @@ proc upgradeToWebSocket*(
 ): WebSocket {.raises: [MummyError], gcsafe.} =
   ## Upgrades the request to a WebSocket connection. You can immediately start
   ## calling send().
-
+  ## Future updates for this WebSocket will be calls to the websocketHandler
+  ## provided to `newServer`. The first event will be onOpen.
+  ## Note: if the client disconnects before receiving this upgrade response,
+  ## no onOpen event will be received.
   if not request.headers.headerContainsToken("Connection", "Upgrade"):
     raise newException(
       MummyError,
