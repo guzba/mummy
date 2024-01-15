@@ -104,7 +104,7 @@ type
   DataEntryKind = enum
     ServerSocketEntry, ClientSocketEntry, EventEntry
 
-  DataEntry = ref object
+  DataEntry {.acyclic.} = ref object
     case kind: DataEntryKind:
     of ServerSocketEntry:
       discard
