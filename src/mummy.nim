@@ -104,7 +104,7 @@ type
   DataEntryKind = enum
     ServerSocketEntry, ClientSocketEntry, EventEntry
 
-  DataEntry = ref object
+  DataEntry {.acyclic.} = ref object
     case kind: DataEntryKind:
     of ServerSocketEntry:
       discard
@@ -357,11 +357,11 @@ proc respond*(
   # This is usually not set by the caller, however it needs to be for HEAD
   # responses where there is a Content-Length but no body
   if "Content-Length" notin headers:
-    let shoulAddContentLengthHeader =
+    let shouldAddContentLengthHeader =
       statusCode != 204 and (statusCode < 100 or statusCode >= 200)
     # Do not add a Content-Length header for a 204 or 1xx response
     # See RFC 7230 3.3.2
-    if shoulAddContentLengthHeader or body.len > 0:
+    if shouldAddContentLengthHeader or body.len > 0:
       headers["Content-Length"] = $body.len
 
   encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
@@ -393,7 +393,10 @@ proc upgradeToWebSocket*(
 ): WebSocket {.raises: [MummyError], gcsafe.} =
   ## Upgrades the request to a WebSocket connection. You can immediately start
   ## calling send().
-
+  ## Future updates for this WebSocket will be calls to the websocketHandler
+  ## provided to `newServer`. The first event will be onOpen.
+  ## Note: if the client disconnects before receiving this upgrade response,
+  ## no onOpen event will be received.
   if not request.headers.headerContainsToken("Connection", "Upgrade"):
     raise newException(
       MummyError,
@@ -877,7 +880,7 @@ proc afterRecvHttp(
         "Transfer-Encoding", "chunked"
       )
 
-    var foundContentLength: bool
+    var foundContentLength, foundTransferEncoding: bool
     for (k, v) in dataEntry.requestState.headers:
       if cmpIgnoreCase(k, "Content-Length") == 0:
         if foundContentLength:
@@ -891,6 +894,11 @@ proc afterRecvHttp(
           dataEntry.requestState.contentLength = parseInt(v)
         except:
           return true # Parsing Content-Length failed, close the connection
+      elif cmpIgnoreCase(k, "Transfer-Encoding") == 0:
+        if foundTransferEncoding:
+          # This is a second Transfer-Encoding header, not valid
+          return true # Close the connection
+        foundTransferEncoding = true
 
     if dataEntry.requestState.contentLength < 0:
       return true # Invalid Content-Length, close the connection
