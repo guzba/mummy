@@ -1,5 +1,6 @@
-when not defined(gcArc) and not defined(gcOrc):
-  {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
+when not defined(nimdoc):
+  when not defined(gcArc) and not defined(gcOrc):
+    {.error: "Using --mm:arc or --mm:orc is required by Mummy.".}
 
 when not compileOption("threads"):
   {.error: "Using --threads:on is required by Mummy.".}
