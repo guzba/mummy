@@ -88,12 +88,12 @@ type
     taskQueueCond: Cond
     taskQueue: Deque[WorkerTask]
     responseQueue: Deque[OutgoingBuffer]
-    responseQueueLock: Atomic[bool]
+    responseQueueLock: Lock
     sendQueue: Deque[OutgoingBuffer]
-    sendQueueLock: Atomic[bool]
+    sendQueueLock: Lock
     websocketClaimed: Table[WebSocket, bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
-    websocketQueuesLock: Atomic[bool]
+    websocketQueuesLock: Lock
 
   Server* = ptr ServerObj
 
@@ -159,15 +159,6 @@ proc `$`*(request: Request): string =
 
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $cast[uint](hash(websocket))
-
-template withLock(lock: var Atomic[bool], body: untyped): untyped =
-  # TAS
-  while lock.exchange(true, moAcquire): # Until we get the lock
-    discard
-  try:
-    body
-  finally:
-    lock.store(false, moRelease)
 
 proc log(server: Server, level: LogLevel, args: varargs[string]) =
   if server.logHandler == nil:
@@ -1084,6 +1075,9 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     joinThreads(server.workerThreads)
     deinitLock(server.taskQueueLock)
     deinitCond(server.taskQueueCond)
+    deinitLock(server.responseQueueLock)
+    deinitLock(server.sendQueueLock)
+    deinitLock(server.websocketQueuesLock)
     try:
       server.responseQueued.close()
     except:
@@ -1479,6 +1473,9 @@ proc newServer*(
 
     initLock(result.taskQueueLock)
     initCond(result.taskQueueCond)
+    initLock(result.responseQueueLock)
+    initLock(result.sendQueueLock)
+    initLock(result.websocketQueuesLock)
 
     for i in 0 ..< workerThreads:
       createThread(result.workerThreads[i], workerProc, result)
