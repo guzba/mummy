@@ -296,8 +296,8 @@
   <dd>
     
     Cleanly stops and deallocates the server. In-flight request handler calls will be allowed to finish. No additional handler calls will be dispatched even if they are queued.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1358" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1358" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1352" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1352" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -307,8 +307,8 @@
   <dd>
     
     Begins the WebSocket closing handshake. This does not discard previously queued messages before starting the closing handshake. The handshake will only begin after the queued messages are sent.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L272" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L272" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L263" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L263" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -326,8 +326,8 @@
   <dd>
     
     Creates a new HTTP server. The request handler will be called for incoming HTTP requests. The WebSocket handler will be called for WebSocket events. Calls to the HTTP, WebSocket and log handlers are made from worker threads. WebSocket events are dispatched serially per connection. This means your WebSocket handler must return from a call before the next call will be dispatched for the same connection.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1426" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1426" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1420" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1420" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -342,8 +342,8 @@
   <dd>
     
     Sends the response for the request. This should usually only be called once per request.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L292" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L292" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L283" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L283" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -355,8 +355,8 @@
   <dd>
     
     Check if this request has been responded. Informational responses (1xx status codes) do not mark a request responded.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1489" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1489" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1486" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1486" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -369,8 +369,8 @@
   <dd>
     
     Enqueues the message to be sent over the WebSocket connection.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L241" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L241" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L232" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L232" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -384,8 +384,8 @@
   <dd>
     
     The server will serve on the address and port. The default address is localhost. Use &quot;0.0.0.0&quot; to make the server externally accessible (with caution). This call does not return unless server.close() is called from another thread.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1367" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1367" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1361" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1361" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -398,8 +398,8 @@
   <dd>
     
     Upgrades the request to a WebSocket connection. You can immediately start calling send(). Future updates for this WebSocket will be calls to the websocketHandler provided to <tt class="docutils literal"><span class="pre"><span class="Identifier">newServer</span></span></tt>. The first event will be onOpen. Note: if the client disconnects before receiving this upgrade response, no onOpen event will be received.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L391" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L391" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L382" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L382" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -412,8 +412,8 @@
   <dd>
     
     This proc blocks until the server is ready to receive requests or the timeout has passed. The timeout is in floating point seconds. This is useful when writing tests, where you need to know the server is ready before you begin sending requests. If the server is already ready this returns immediately.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1495" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1495" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1492" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1492" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -435,7 +435,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2024-01-18 08:03:26 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2024-01-21 22:29:29 UTC</small>
       </div>
     </div>
   </div>

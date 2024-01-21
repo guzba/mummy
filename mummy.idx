@@ -18,14 +18,14 @@ nim	WebSocketHandler	mummy.html#WebSocketHandler	type WebSocketHandler		68
 nim	Server	mummy.html#Server	type Server		98
 nim	`$`	mummy.html#$,Request	proc `$`(request: Request): string		151
 nim	`$`	mummy.html#$,WebSocket	proc `$`(websocket: WebSocket): string		160
-nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; data: sink string; kind = TextMessage)		241
-nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		272
-nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		292
-nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		391
-nim	close	mummy.html#close,Server	proc close(server: Server)		1358
-nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1367
-nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1426
-nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1489
-nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1495
+nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; data: sink string; kind = TextMessage)		232
+nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		263
+nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		283
+nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		382
+nim	close	mummy.html#close,Server	proc close(server: Server)		1352
+nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1361
+nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1420
+nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1486
+nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1492
 nimgrp	$	mummy.html#$-procs-all	proc		151
-nimgrp	close	mummy.html#close-procs-all	proc		272
+nimgrp	close	mummy.html#close-procs-all	proc		263
