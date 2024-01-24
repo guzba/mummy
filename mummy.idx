@@ -22,10 +22,10 @@ nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; da
 nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		263
 nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		283
 nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		382
-nim	close	mummy.html#close,Server	proc close(server: Server)		1353
-nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1362
-nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1421
-nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1487
-nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1493
+nim	close	mummy.html#close,Server	proc close(server: Server)		1352
+nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1361
+nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1420
+nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1486
+nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1492
 nimgrp	$	mummy.html#$-procs-all	proc		151
 nimgrp	close	mummy.html#close-procs-all	proc		263
