@@ -503,7 +503,6 @@ proc workerProc(server: Server) {.raises: [].} =
     release(server.taskQueueLock)
 
     runTask(task)
-    setCurrentException(nil)
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   withLock server.taskQueueLock:
