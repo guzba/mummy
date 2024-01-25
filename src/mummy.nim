@@ -504,6 +504,10 @@ proc workerProc(server: Server) {.raises: [].} =
 
     runTask(task)
 
+    when defined(mummyCheck22398):
+      if getCurrentExceptionMsg() != "":
+        echo "Detected leaked exception: ", getCurrentExceptionMsg()
+
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   withLock server.taskQueueLock:
     server.taskQueue.addLast(task)
