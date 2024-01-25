@@ -489,6 +489,9 @@ proc workerProc(server: Server) {.raises: [].} =
         if update.get.event == CloseEvent:
           break
 
+  when defined(mummyCheck22398):
+    var loggedExceptionLeak: bool
+
   while true:
     acquire(server.taskQueueLock)
 
@@ -506,8 +509,9 @@ proc workerProc(server: Server) {.raises: [].} =
 
     when defined(mummyCheck22398):
       # https://github.com/nim-lang/Nim/issues/22398
-      if getCurrentExceptionMsg() != "":
+      if not loggedExceptionLeak and getCurrentExceptionMsg() != "":
         echo "Detected leaked exception: ", getCurrentExceptionMsg()
+        loggedExceptionLeak = true
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   withLock server.taskQueueLock:
