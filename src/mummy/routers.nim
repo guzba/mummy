@@ -1,4 +1,4 @@
-import mummy, std/strutils
+import mummy, std/strutils, webby
 
 type
   Router* = object
@@ -190,15 +190,6 @@ proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
   let literal = partialWildcard[1 .. ^2]
   return literal in test
 
-proc pathParts(uri: string): seq[string] =
-  # The URI path is assumed to end at the first ?
-  let searchStart = uri.find('?')
-  if searchStart >= 0:
-    result = uri[0 ..< searchStart].split('/')
-  else:
-    result = uri.split('/')
-  result.delete(0)
-
 proc toHandler*(router: Router): RequestHandler =
   return proc(request: Request) =
     ## All requests arrive here to be routed
@@ -214,7 +205,17 @@ proc toHandler*(router: Router): RequestHandler =
       return
 
     try:
-      let uriParts = request.uri.pathParts()
+      let url =
+        try:
+          parseUrl(request.uri)
+        except:
+          notFound()
+          return
+
+      let uriParts = block:
+        var tmp = url.path.split('/')
+        tmp.delete(0)
+        tmp
 
       var matchedSomeRoute: bool
       for route in router.routes:
