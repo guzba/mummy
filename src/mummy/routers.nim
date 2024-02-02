@@ -63,8 +63,6 @@ proc addRoute*(
           MummyError,
           "Route ** followed by another * or ** is not supported"
         )
-      else:
-        break
     inc i
 
   router.routes.add(Route(
@@ -154,7 +152,7 @@ proc defaultMethodNotAllowedHandler(request: Request) =
     request.respond(405, headers, body)
 
 proc isPartialWildcard(test: string): bool {.inline.} =
-  test.len > 2 and test.startsWith('*') or test.endsWith('*')
+  test.len >= 2 and test.startsWith('*') or test.endsWith('*')
 
 proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
   let
@@ -194,16 +192,11 @@ proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
 
 proc pathParts(uri: string): seq[string] =
   # The URI path is assumed to end at the first ?
-  var len = uri.len
   let searchStart = uri.find('?')
   if searchStart >= 0:
-    len = searchStart
-
-  if len != uri.len:
-    result = uri[0 ..< len].split('/')
+    result = uri[0 ..< searchStart].split('/')
   else:
     result = uri.split('/')
-
   result.delete(0)
 
 proc toHandler*(router: Router): RequestHandler =
@@ -237,9 +230,9 @@ proc toHandler*(router: Router): RequestHandler =
             matchedRoute = false
             break
 
-          if route.parts[i] == "*": # Wildcard
+          if route.parts[i] == "*": # Wildcard segment
             inc i
-          elif route.parts[i] == "**": # Multi-part wildcard
+          elif route.parts[i] == "**": # Multi-segment wildcard
             # Do we have a required next literal?
             if i + 1 < route.parts.len and atLeastOneMultiWildcardMatch:
               let matchesNextLiteral =

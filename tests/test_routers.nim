@@ -22,7 +22,13 @@ block:
   router.get("/*double*", handler)
 
   doAssertRaises MummyError:
+    router.get("/**/*", handler)
+
+  doAssertRaises MummyError:
     router.get("/**/**", handler)
+
+  doAssertRaises MummyError:
+    router.get("/**/bad/**/**", handler)
 
   doAssertRaises MummyError:
     let s = ""
@@ -118,13 +124,13 @@ block:
   request.uri = "/literal*asdf&asdf"
   routerHandler(request)
 
-  request.uri = "/literalasdf#asdf"
+  request.uri = "/literalasdf"
   routerHandler(request)
 
-  request.uri = "/adoubleb#asdf"
+  request.uri = "/adoubleb"
   routerHandler(request)
 
-  request.uri = "/longerdoubleevenmore?a=b#asdf"
+  request.uri = "/longerdoubleevenmore?a=b"
   routerHandler(request)
 
   request.uri = "/doubleb"
@@ -193,7 +199,7 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/#asdf"
+  request.uri = "/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -309,6 +315,39 @@ block:
     routerHandler(request)
 
   request.uri = "/wowpage/a/do.htm"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+block:
+  var router: Router
+  router.notFoundHandler = proc(request: Request) =
+    doAssert false
+  router.methodNotAllowedHandler = proc(request: Request) =
+    doAssert false
+  router.errorHandler = proc(request: Request, e: ref Exception) =
+    doAssert false
+
+  router.get("/*a", handler)
+
+  let routerHandler = router.toHandler()
+
+  let request = cast[Request](allocShared0(sizeof(RequestObj)))
+  request.httpMethod = "GET"
+
+  request.uri = "/a"
+  routerHandler(request)
+
+  request.uri = "/aa"
+  routerHandler(request)
+
+  request.uri = "/somethinga"
+  routerHandler(request)
+
+  request.uri = "/a/"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/something"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
