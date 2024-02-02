@@ -24,10 +24,26 @@ block:
   doAssertRaises MummyError:
     router.get("/**/**", handler)
 
+  doAssertRaises MummyError:
+    let s = ""
+    router.get(s, handler)
+
+  doAssertRaises MummyError:
+    let s = "abc"
+    router.get(s, handler)
+
   let routerHandler = router.toHandler()
 
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
+
+  request.uri = ""
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "page.html"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
 
   request.uri = "/"
   routerHandler(request)
@@ -295,3 +311,102 @@ block:
   request.uri = "/wowpage/a/do.htm"
   doAssertRaises AssertionDefect:
     routerHandler(request)
+
+block:
+  var router: Router
+  router.notFoundHandler = proc(request: Request) =
+    doAssert false
+  router.methodNotAllowedHandler = proc(request: Request) =
+    doAssert false
+  router.errorHandler = proc(request: Request, e: ref Exception) =
+    doAssert false
+
+  router.get("/*something*", handler)
+
+  let routerHandler = router.toHandler()
+
+  let request = cast[Request](allocShared0(sizeof(RequestObj)))
+  request.httpMethod = "GET"
+
+  request.uri = "/something"
+  routerHandler(request)
+
+  request.uri = "/asomething"
+  routerHandler(request)
+
+  request.uri = "/somethingb"
+  routerHandler(request)
+
+  request.uri = "/asomethingb"
+  routerHandler(request)
+
+  request.uri = "/something/"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/something/else"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+block:
+  var router: Router
+  router.notFoundHandler = proc(request: Request) =
+    doAssert false
+  router.methodNotAllowedHandler = proc(request: Request) =
+    doAssert false
+  router.errorHandler = proc(request: Request, e: ref Exception) =
+    doAssert false
+
+  router.get("/a*b", handler) # Not a wildcard here
+
+  let routerHandler = router.toHandler()
+
+  let request = cast[Request](allocShared0(sizeof(RequestObj)))
+  request.httpMethod = "GET"
+
+  request.uri = "/a"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/ab"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/asomethingb"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/a*b"
+  routerHandler(request)
+
+block:
+  var router: Router
+  router.notFoundHandler = proc(request: Request) =
+    doAssert false
+  router.methodNotAllowedHandler = proc(request: Request) =
+    doAssert false
+  router.errorHandler = proc(request: Request, e: ref Exception) =
+    doAssert false
+
+  router.get("/**z", handler) # Not a wildcard here
+  router.get("/a**b", handler) # Not a wildcard here
+
+  let routerHandler = router.toHandler()
+
+  let request = cast[Request](allocShared0(sizeof(RequestObj)))
+  request.httpMethod = "GET"
+
+  request.uri = "/a"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/ab"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/asomethingb"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/a**b"
+  routerHandler(request)

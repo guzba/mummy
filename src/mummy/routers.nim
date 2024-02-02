@@ -28,13 +28,28 @@ proc addRoute*(
   ## they were added. The handler for the first matching route is called.
   ## The route path can have `*` and `**` wildcards.
   ## The `*` wildcard represents 0 or more characters, excluding `/`.
-  ## The `**` wildcard represents 1 or more path elements delimited by `/`.
+  ## Valid uses are:
+  ##   "/*"              (wildcard path segment)
+  ##   "/*.json"         (wildcard prefix)
+  ##   "/page_*"         (wildcard suffix)
+  ##   "/*_something_*"  (wildcard prefix and suffix)
+  ## The `**` wildcard represents 1 or more path segments delimited by `/`.
+  ## Valid uses are:
+  ##   "/**"             (wildcard path)
+  ##   "/**/thing"       (wildcard path with suffix)
+  ##   "/thing/**         (wildcard path with prefix)
+  ## See tests/test_routers.nim for more complex routing examples.
 
   when route is static string:
     when route == "":
       {.error: "Invalid empty route".}
     when route[0] != '/':
       {.error: "Routes must begin with /".}
+  else:
+    if route == "":
+      raise newException(MummyError, "Invalid empty route")
+    elif route[0] != '/':
+      raise newException(MummyError, "Routes must begin with /")
 
   var parts = route.split('/')
   parts.delete(0)
@@ -178,15 +193,11 @@ proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
   return literal in test
 
 proc pathParts(uri: string): seq[string] =
-  # The URI path is assumed to end at the first ? & #
-  var
-    a = uri.find('?')
-    b = uri.find('#')
+  # The URI path is assumed to end at the first ?
   var len = uri.len
-  if a != -1:
-    len = min(len, a)
-  if b != -1:
-    len = min(len, b)
+  let searchStart = uri.find('?')
+  if searchStart >= 0:
+    len = searchStart
 
   if len != uri.len:
     result = uri[0 ..< len].split('/')
@@ -205,7 +216,7 @@ proc toHandler*(router: Router): RequestHandler =
       else:
         defaultNotFoundHandler(request)
 
-    if request.uri.len > 0 and request.uri[0] != '/' and ':' in request.uri:
+    if request.uri.len == 0 or request.uri[0] != '/':
       notFound()
       return
 
