@@ -7,7 +7,7 @@ when not compileOption("threads"):
 
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
-    std/parseutils, std/random, std/selectors, std/sets, std/sha1, std/strutils,
+    std/parseutils, std/random, std/selectors, std/sets, crunchy, std/strutils,
     std/tables, std/times, webby/httpheaders, zippy, std/options
 
 when defined(linux):
@@ -422,8 +422,7 @@ proc upgradeToWebSocket*(
     clientId: request.clientId
   )
 
-  let hash =
-    secureHash(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").Sha1Digest
+  let hash = sha1(websocketKey & "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
 
   var headers: HttpHeaders
   headers["Connection"] = "Upgrade"
