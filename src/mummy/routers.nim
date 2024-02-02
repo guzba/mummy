@@ -28,13 +28,28 @@ proc addRoute*(
   ## they were added. The handler for the first matching route is called.
   ## The route path can have `*` and `**` wildcards.
   ## The `*` wildcard represents 0 or more characters, excluding `/`.
-  ## The `**` wildcard represents 1 or more path elements delimited by `/`.
+  ## Valid uses are:
+  ##   "/*"              (wildcard path segment)
+  ##   "/*.json"         (wildcard prefix)
+  ##   "/page_*"         (wildcard suffix)
+  ##   "/*_something_*"  (wildcard prefix and suffix)
+  ## The `**` wildcard represents 1 or more path segments delimited by `/`.
+  ## Valid uses are:
+  ##   "/**"             (wildcard path)
+  ##   "/**/thing"       (wildcard path with suffix)
+  ##   "/thing/**         (wildcard path with prefix)
+  ## See tests/test_routers.nim for more complex routing examples.
 
   when route is static string:
     when route == "":
       {.error: "Invalid empty route".}
     when route[0] != '/':
       {.error: "Routes must begin with /".}
+  else:
+    if route == "":
+      raise newException(MummyError, "Invalid empty route")
+    elif route[0] != '/':
+      raise newException(MummyError, "Routes must begin with /")
 
   var parts = route.split('/')
   parts.delete(0)
@@ -48,8 +63,6 @@ proc addRoute*(
           MummyError,
           "Route ** followed by another * or ** is not supported"
         )
-      else:
-        break
     inc i
 
   router.routes.add(Route(
@@ -139,7 +152,7 @@ proc defaultMethodNotAllowedHandler(request: Request) =
     request.respond(405, headers, body)
 
 proc isPartialWildcard(test: string): bool {.inline.} =
-  test.len > 2 and test.startsWith('*') or test.endsWith('*')
+  test.len >= 2 and test.startsWith('*') or test.endsWith('*')
 
 proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
   let
@@ -178,21 +191,12 @@ proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
   return literal in test
 
 proc pathParts(uri: string): seq[string] =
-  # The URI path is assumed to end at the first ? & #
-  var
-    a = uri.find('?')
-    b = uri.find('#')
-  var len = uri.len
-  if a != -1:
-    len = min(len, a)
-  if b != -1:
-    len = min(len, b)
-
-  if len != uri.len:
-    result = uri[0 ..< len].split('/')
+  # The URI path is assumed to end at the first ?
+  let searchStart = uri.find('?')
+  if searchStart >= 0:
+    result = uri[0 ..< searchStart].split('/')
   else:
     result = uri.split('/')
-
   result.delete(0)
 
 proc toHandler*(router: Router): RequestHandler =
@@ -205,7 +209,7 @@ proc toHandler*(router: Router): RequestHandler =
       else:
         defaultNotFoundHandler(request)
 
-    if request.uri.len > 0 and request.uri[0] != '/' and ':' in request.uri:
+    if request.uri.len == 0 or request.uri[0] != '/':
       notFound()
       return
 
@@ -226,9 +230,9 @@ proc toHandler*(router: Router): RequestHandler =
             matchedRoute = false
             break
 
-          if route.parts[i] == "*": # Wildcard
+          if route.parts[i] == "*": # Wildcard segment
             inc i
-          elif route.parts[i] == "**": # Multi-part wildcard
+          elif route.parts[i] == "**": # Multi-segment wildcard
             # Do we have a required next literal?
             if i + 1 < route.parts.len and atLeastOneMultiWildcardMatch:
               let matchesNextLiteral =
