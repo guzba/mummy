@@ -7,5 +7,5 @@ srcDir = "src"
 
 requires "nim >= 1.6.8"
 requires "zippy >= 0.10.9"
-requires "https://github.com/guzba/webby#head"
+requires "webby >= 0.2.0"
 requires "crunchy >= 0.1.11"
