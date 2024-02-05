@@ -477,7 +477,7 @@ block:
     doAssert request.pathParams.len == 1
     doAssert request.pathParams["id"] == "123"
 
-  router.get("/1/@id", routeHandler1)
+  router.get("/@id", routeHandler1)
 
   proc routeHandler2(request: RoutedRequest) =
     doAssert "name" in request.pathParams
@@ -486,19 +486,28 @@ block:
     doAssert request.pathParams["name"] == "abc"
     doAssert request.pathParams["id"] == "123"
 
-  router.get("/2/@name/@id", routeHandler2)
+  router.get("/@name/@id", routeHandler2)
+
+
+  proc routeHandler3(request: RoutedRequest) =
+    doAssert "first" in request.pathParams
+    doAssert "second" in request.pathParams
+    doAssert request.pathParams.len == 2
+    doAssert request.pathParams["first"] == "a"
+    doAssert request.pathParams["second"] == "b"
+
+  router.get("/@first/zzz/@second", routeHandler3)
 
   let routerHandler = router.toHandler()
 
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/1"
-  doAssertRaises AssertionDefect:
-    routerHandler(request)
-
-  request.uri = "/1/123"
+  request.uri = "/123"
   routerHandler(request)
 
-  request.uri = "/2/abc/123"
+  request.uri = "/abc/123"
+  routerHandler(request)
+
+  request.uri = "/a/zzz/b"
   routerHandler(request)
