@@ -1,4 +1,4 @@
-import mummy, mummy/routers
+import mummy, mummy/routers, webby/urls
 
 proc handler(request: Request) =
   discard
@@ -20,6 +20,7 @@ block:
   router.get("/partial/*", handler)
   router.get("/literal*", handler)
   router.get("/*double*", handler)
+  router.get("/質問/日本語のURLはどうする", handler)
 
   doAssertRaises MummyError:
     router.get("/**/*", handler)
@@ -144,6 +145,11 @@ block:
 
   request.path = "/doubl"
   doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  block:
+    let url = parseUrl("/%E8%B3%AA%E5%95%8F/%E6%97%A5%E6%9C%AC%E8%AA%9E%E3%81%AEURL%E3%81%AF%E3%81%A9%E3%81%86%E3%81%99%E3%82%8B")
+    request.path = url.path
     routerHandler(request)
 
   deallocShared(request)
