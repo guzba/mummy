@@ -14,7 +14,7 @@ db.withConnection conn:
   conn.exec(sql"insert or replace into table1 values (0, 0)")
 
 # A request to /get will return the count
-proc getHandler(request: Request) =
+proc getHandler(request: RoutedRequest) =
   var count: int
   db.withConnection conn:
     count = parseInt(conn.getValue(sql"select count from table1 limit 1"))
@@ -24,7 +24,7 @@ proc getHandler(request: Request) =
   request.respond(200, headers, "Count: " & $count & "\n")
 
 # A request to /inc will increase the count by 1
-proc incHandler(request: Request) =
+proc incHandler(request: RoutedRequest) =
   db.withConnection conn:
     conn.exec(sql"update table1 set count = count + 1")
 

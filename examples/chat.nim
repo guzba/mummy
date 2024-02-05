@@ -17,7 +17,7 @@ var
 
 initLock(lock)
 
-proc indexHandler(request: Request) =
+proc indexHandler(request: RoutedRequest) =
   var headers: HttpHeaders
   headers["Content-Type"] = "text/html"
   request.respond(200, headers, """
@@ -43,7 +43,7 @@ proc indexHandler(request: Request) =
   <div>Messages received:</div>
   """)
 
-proc upgradeHandler(request: Request) =
+proc upgradeHandler(request: RoutedRequest) =
   let websocket = request.upgradeToWebSocket()
   websocket.send("Hello from WebSocket server!")
 

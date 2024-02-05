@@ -6,7 +6,7 @@ import mummy, mummy/routers, mummy/multipart
 ## curl -v -F key1="abc" -F key2="def" http://localhost:8080/multipart
 ## curl -v -F upload=@<FILE_PATH> http://localhost:8080/multipart
 
-proc multipartHandler(request: Request) =
+proc multipartHandler(request: RoutedRequest) =
   let multipartEntries = request.decodeMultipart()
   for entry in multipartEntries:
     echo entry.name, ", has data? ", entry.data.isSome

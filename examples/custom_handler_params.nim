@@ -10,23 +10,23 @@ import mummy, mummy/routers
 ## We can then create any number of handlers using the AuthenticatedHandler
 ## signature and have them all go through one authentication code path.
 
-type AuthenticatedHandler = proc(request: Request, userId: string) {.gcsafe.}
+type AuthenticatedHandler = proc(request: RoutedRequest, userId: string) {.gcsafe.}
 
-proc indexHandler(request: Request) =
+proc indexHandler(request: RoutedRequest) =
   request.respond(200, @[("Content-Type", "text/plain")], "Hello, World!")
 
-proc profileHandler(request: Request, userId: string) =
+proc profileHandler(request: RoutedRequest, userId: string) =
   # This is the authenticated endpoint for a user's profile.
   request.respond(200, @[("Content-Type", "text/plain")], "Hello " & userId)
 
-proc settingsHandler(request: Request, userId: string) =
+proc settingsHandler(request: RoutedRequest, userId: string) =
   # This is the authenticated endpoint for a user's settings.
   request.respond(200, @[("Content-Type", "text/plain")], "Settings for " & userId)
 
-proc toHandler(wrapped: AuthenticatedHandler): RequestHandler =
-  # Calling `toHandler` returns a simple RequestHandler proc for an
+proc toHandler(wrapped: AuthenticatedHandler): RouteHandler =
+  # Calling `toHandler` returns a simple RouteHandler proc for an
   # AuthenticatedHandler so it can be registered with a Router.
-  return proc(request: Request) =
+  return proc(request: RoutedRequest) =
     # This code runs before we call the AuthenticatedHandler.
     # We can do the user authentication that all AuthenticatedHandlers
     # expect here.
@@ -53,4 +53,4 @@ server.serve(Port(8080))
 ##
 ## You can add any number of parameters of any type you want to a custom
 ## handler type and then use the example above for how to wrap it in a
-## simple RequestHandler.
+## simple RouteHandler.

@@ -449,3 +449,56 @@ block:
 
   request.uri = "/a**b"
   routerHandler(request)
+
+block:
+  var pathParams: PathParams
+
+  doAssert "foo" notin pathParams
+
+  pathParams["foo"] = "bar"
+
+  doAssert "foo" in pathParams
+
+  doAssert pathParams.len == 1
+
+  doAssert pathParams["foo"] == "bar"
+
+block:
+  var router: Router
+  router.notFoundHandler = proc(request: Request) =
+    doAssert false
+  router.methodNotAllowedHandler = proc(request: Request) =
+    doAssert false
+  router.errorHandler = proc(request: Request, e: ref Exception) =
+    doAssert false
+
+  proc routeHandler1(request: RoutedRequest) =
+    doAssert "id" in request.pathParams
+    doAssert request.pathParams.len == 1
+    doAssert request.pathParams["id"] == "123"
+
+  router.get("/1/@id", routeHandler1)
+
+  proc routeHandler2(request: RoutedRequest) =
+    doAssert "name" in request.pathParams
+    doAssert "id" in request.pathParams
+    doAssert request.pathParams.len == 2
+    doAssert request.pathParams["name"] == "abc"
+    doAssert request.pathParams["id"] == "123"
+
+  router.get("/2/@name/@id", routeHandler2)
+
+  let routerHandler = router.toHandler()
+
+  let request = cast[Request](allocShared0(sizeof(RequestObj)))
+  request.httpMethod = "GET"
+
+  request.uri = "/1"
+  doAssertRaises AssertionDefect:
+    routerHandler(request)
+
+  request.uri = "/1/123"
+  routerHandler(request)
+
+  request.uri = "/2/abc/123"
+  routerHandler(request)

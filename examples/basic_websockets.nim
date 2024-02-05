@@ -1,6 +1,6 @@
 import mummy, mummy/routers
 
-proc indexHandler(request: Request) =
+proc indexHandler(request: RoutedRequest) =
   var headers: HttpHeaders
   headers["Content-Type"] = "text/html"
   request.respond(200, headers, """
@@ -12,7 +12,7 @@ proc indexHandler(request: Request) =
   </script>
   """)
 
-proc upgradeHandler(request: Request) =
+proc upgradeHandler(request: RoutedRequest) =
   let websocket = request.upgradeToWebSocket()
   websocket.send("Hello world from WebSocket!")
 
