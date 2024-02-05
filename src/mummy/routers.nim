@@ -1,4 +1,4 @@
-import mummy, mummy/multipart, std/strutils, std/typetraits, webby/urls
+import mummy, std/strutils, webby/urls
 
 export queryparams
 
@@ -19,56 +19,11 @@ type
     httpMethod: string
     parts: seq[string]
     handler: RequestHandler
-    handler2: RouteHandler
-
-  RoutedRequest* = object
-    internal: Request
-    # httpVersion*: HttpVersion
-    # httpMethod*: string
-    # uri*: string
-    # headers*: HttpHeaders
-    # body*: string
-    # remoteAddress*: string
-    pathParams*: PathParams
-    queryParams*: QueryParams
-
-  RouteHandler* = proc(request: RoutedRequest) {.gcsafe.}
-
-  PathParams* = distinct seq[(string, string)]
-
-converter toBase*(params: var PathParams): var seq[(string, string)] =
-  params.distinctBase
-
-converter toBase*(params: PathParams): lent seq[(string, string)] =
-  params.distinctBase
-
-proc `[]`*(pathParams: PathParams, key: string): string =
-  ## Returns the value for key, or an empty string if the key is not present.
-  for (k, v) in pathParams.toBase:
-    if k == key:
-      return v
-
-proc `[]=`*(pathParams: var PathParams, key, value: string) =
-  ## Sets the value for the key. If the key is not present, this
-  ## appends a new key-value pair to the end.
-  for pair in pathParams.mitems:
-    if pair[0] == key:
-      pair[1] = value
-      return
-  pathParams.add((key, value))
-
-proc contains*(pathParams: PathParams, key: string): bool =
-  for pair in pathParams:
-    if pair[0] == key:
-      return true
-
-proc getOrDefault*(pathParams: PathParams, key, default: string): string =
-  if key in pathParams: pathParams[key] else: default
 
 proc addRoute*(
   router: var Router,
   httpMethod, route: string | static string,
-  handler: RequestHandler | RouteHandler
+  handler: RequestHandler
 ) =
   ## Adds a route to the router. Routes are a path string and an HTTP method.
   ## When a request comes in, it is tested against the routes in the order
@@ -116,18 +71,11 @@ proc addRoute*(
         )
     inc i
 
-  when handler is RouteHandler:
-    router.routes.add(Route(
-      httpMethod: httpMethod,
-      parts: move parts,
-      handler2: handler
-    ))
-  else:
-    router.routes.add(Route(
-      httpMethod: httpMethod,
-      parts: move parts,
-      handler: handler
-    ))
+  router.routes.add(Route(
+    httpMethod: httpMethod,
+    parts: move parts,
+    handler: handler
+  ))
 
 proc get*(
   router: var Router,
@@ -181,62 +129,6 @@ proc patch*(
   router: var Router,
   route: string | static string,
   handler: RequestHandler
-) =
-  ## Adds a route for PATCH requests. See `addRoute` for more info.
-  router.addRoute("PATCH", route, handler)
-
-proc get*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
-) =
-  ## Adds a route for GET requests. See `addRoute` for more info.
-  router.addRoute("GET", route, handler)
-
-proc head*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
-) =
-  ## Adds a route for HEAD requests. See `addRoute` for more info.
-  router.addRoute("HEAD", route, handler)
-
-proc post*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
-) =
-  ## Adds a route for POST requests. See `addRoute` for more info.
-  router.addRoute("POST", route, handler)
-
-proc put*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
-) =
-  ## Adds a route for PUT requests. See `addRoute` for more info.
-  router.addRoute("PUT", route, handler)
-
-proc delete*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
-) =
-  ## Adds a route for DELETE requests. See `addRoute` for more info.
-  router.addRoute("DELETE", route, handler)
-
-proc options*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
-) =
-  ## Adds a route for OPTIONS requests. See `addRoute` for more info.
-  router.addRoute("OPTIONS", route, handler)
-
-proc patch*(
-  router: var Router,
-  route: string | static string,
-  handler: RouteHandler
 ) =
   ## Adds a route for PATCH requests. See `addRoute` for more info.
   router.addRoute("PATCH", route, handler)
@@ -314,39 +206,28 @@ proc toHandler*(router: Router): RequestHandler =
       else:
         defaultNotFoundHandler(request)
 
-    if request.uri.len == 0 or request.uri[0] != '/':
+    if request.path.len == 0 or request.path[0] != '/':
       notFound()
       return
 
     try:
-      var url =
-        try:
-          parseUrl(request.uri)
-        except:
-          notFound()
-          return
-
-      var routedRequest: RoutedRequest
-      routedRequest.internal = request
-      routedRequest.queryParams = move url.query
-
-      let uriParts = block:
-        var tmp = url.path.split('/')
+      let pathParts = block:
+        var tmp = request.path.split('/')
         tmp.delete(0)
         tmp
 
       var matchedSomeRoute: bool
       for route in router.routes:
-        if route.parts.len > uriParts.len:
+        if route.parts.len > pathParts.len:
           continue
 
-        routedRequest.pathParams.setLen(0)
+        request.pathParams.setLen(0)
 
         var
           i: int
           matchedRoute = true
           atLeastOneMultiWildcardMatch = false
-        for j, part in uriParts:
+        for j, part in pathParts:
           if i >= route.parts.len:
             matchedRoute = false
             break
@@ -355,7 +236,7 @@ proc toHandler*(router: Router): RequestHandler =
             inc i
           elif route.parts[i].len >= 2 and route.parts[i].startsWith('@'):
             # Named path parameter
-            routedRequest.pathParams.add((route.parts[i][1 .. ^1], part))
+            request.pathParams.add((route.parts[i][1 .. ^1], part))
             inc i
           elif route.parts[i] == "**": # Multi-segment wildcard
             # Do we have a required next literal?
@@ -368,7 +249,7 @@ proc toHandler*(router: Router): RequestHandler =
               if matchesNextLiteral:
                 i += 2
                 atLeastOneMultiWildcardMatch = false
-              elif j == uriParts.high:
+              elif j == pathParts.high:
                 matchedRoute = false
                 break
             else:
@@ -387,10 +268,7 @@ proc toHandler*(router: Router): RequestHandler =
         if matchedRoute:
           matchedSomeRoute = true
           if request.httpMethod == route.httpMethod: # We have a winner
-            if route.handler2 != nil:
-              route.handler2(routedRequest)
-            else:
-              route.handler(request)
+            route.handler(request)
             return
 
       if matchedSomeRoute: # We matched a route but not the HTTP method
@@ -409,47 +287,3 @@ proc toHandler*(router: Router): RequestHandler =
 
 converter convertToHandler*(router: Router): RequestHandler =
   router.toHandler()
-
-proc `$`*(request: RoutedRequest): string {.inline.} =
-  $request.internal
-
-proc httpMethod*(request: RoutedRequest): lent string {.inline.} =
-  request.internal.httpMethod
-
-proc uri*(request: RoutedRequest): lent string {.inline.} =
-  request.internal.uri
-
-proc headers*(request: RoutedRequest): lent HttpHeaders {.inline.} =
-  request.internal.headers
-
-proc body*(request: RoutedRequest): lent string {.inline.} =
-  request.internal.body
-
-proc remoteAddress*(request: RoutedRequest): lent string {.inline.} =
-  request.internal.remoteAddress
-
-proc respond*(
-  request: RoutedRequest,
-  statusCode: int,
-  headers: sink HttpHeaders = emptyHttpHeaders(),
-  body: sink string = ""
-) {.inline, raises: [], gcsafe.} =
-  ## Sends the response for the request.
-  ## This should usually only be called once per request.
-  request.internal.respond(statusCode, move headers, move body)
-
-proc upgradeToWebSocket*(
-  request: RoutedRequest
-): WebSocket {.inline, raises: [MummyError], gcsafe.} =
-  ## Upgrades the request to a WebSocket connection. You can immediately start
-  ## calling send().
-  ## Future updates for this WebSocket will be calls to the websocketHandler
-  ## provided to `newServer`. The first event will be onOpen.
-  ## Note: if the client disconnects before receiving this upgrade response,
-  ## no onOpen event will be received.
-  request.internal.upgradeToWebSocket()
-
-proc decodeMultipart*(
-  request: RoutedRequest
-): seq[MultipartEntry] {.raises: [MummyError].} =
-  request.internal.decodeMultipart()

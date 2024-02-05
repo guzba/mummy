@@ -1,10 +1,10 @@
 import mummy, mummy/routers
 
-proc firstHandler(request: RoutedRequest) =
+proc firstHandler(request: Request) =
   # Responds with a 302 redirect
   request.respond(302, @[("Location", "/second")])
 
-proc secondHandler(request: RoutedRequest) =
+proc secondHandler(request: Request) =
   request.respond(200, @[("Content-Type", "text/plain")], "Hello, World!")
 
 var router: Router

@@ -2,7 +2,7 @@ import mummy, mummy/routers
 
 ## This example shows how to access client request headers.
 
-proc indexHandler(request: RoutedRequest) =
+proc indexHandler(request: Request) =
   # Access specific request headers
   echo request.headers["Host"]
 

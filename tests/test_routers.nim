@@ -43,106 +43,106 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = ""
+  request.path = ""
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "page.html"
+  request.path = "page.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/"
+  request.path = "/"
   routerHandler(request)
 
-  request.uri = "/a"
+  request.path = "/a"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/page.html"
+  request.path = "/page.html"
   routerHandler(request)
 
-  request.uri = "/script.js"
+  request.path = "/script.js"
   routerHandler(request)
 
-  request.uri = "/.js"
+  request.path = "/.js"
   routerHandler(request)
 
-  request.uri = "/script.j"
+  request.path = "/script.j"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/script.html"
+  request.path = "/script.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/script"
+  request.path = "/script"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/min.js"
+  request.path = "/min.js"
   routerHandler(request)
 
-  request.uri = "/index.html"
+  request.path = "/index.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/index.html"
+  request.path = "/a/index.html"
   routerHandler(request)
 
-  request.uri = "/b/index.html"
+  request.path = "/b/index.html"
   routerHandler(request)
 
-  request.uri = "/a/b/index.html"
+  request.path = "/a/b/index.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/styles/index.css"
+  request.path = "/styles/index.css"
   routerHandler(request)
 
-  request.uri = "/styles/2/index.css"
+  request.path = "/styles/2/index.css"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/styles/script.js"
+  request.path = "/styles/script.js"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/partial"
+  request.path = "/partial"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/partial/something"
+  request.path = "/partial/something"
   routerHandler(request)
 
-  request.uri = "/partial/more/here?asdf=true"
+  request.path = "/partial/more/here"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/literal*"
+  request.path = "/literal*"
   routerHandler(request)
 
-  request.uri = "/literal*asdf&asdf"
+  request.path = "/literal*asdf&asdf"
   routerHandler(request)
 
-  request.uri = "/literalasdf"
+  request.path = "/literalasdf"
   routerHandler(request)
 
-  request.uri = "/adoubleb"
+  request.path = "/adoubleb"
   routerHandler(request)
 
-  request.uri = "/longerdoubleevenmore?a=b"
+  request.path = "/longerdoubleevenmore"
   routerHandler(request)
 
-  request.uri = "/doubleb"
+  request.path = "/doubleb"
   routerHandler(request)
 
-  request.uri = "/adouble"
+  request.path = "/adouble"
   routerHandler(request)
 
-  request.uri = "/double"
+  request.path = "/double"
   routerHandler(request)
 
-  request.uri = "/doubl"
+  request.path = "/doubl"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -168,19 +168,19 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/"
+  request.path = "/"
   routerHandler(request)
 
-  request.uri = "/index.html"
+  request.path = "/index.html"
   routerHandler(request)
 
-  request.uri = "/path"
+  request.path = "/path"
   routerHandler(request)
 
-  request.uri = "/path/to/thing.html"
+  request.path = "/path/to/thing.html"
   routerHandler(request)
 
-  request.uri = "/a/b/c/d/e/f/g/h.txt"
+  request.path = "/a/b/c/d/e/f/g/h.txt"
   routerHandler(request)
 
 block:
@@ -199,19 +199,19 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/"
+  request.path = "/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/TEST/page.html"
+  request.path = "/TEST/page.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/TEST/a/b/c/d.html"
+  request.path = "/TEST/a/b/c/d.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/TEST/b.html"
+  request.path = "/a/TEST/b.html"
   routerHandler(request)
 
 block:
@@ -230,57 +230,57 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/"
+  request.path = "/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/index.html"
+  request.path = "/index.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/path"
+  request.path = "/path"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/path/to/thing.html"
+  request.path = "/path/to/thing.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/b/c/d/e/f/g/h.txt"
+  request.path = "/a/b/c/d/e/f/g/h.txt"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/b/TEST/d/f/g.html"
+  request.path = "/a/b/TEST/d/f/g.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/TEST/page.html"
+  request.path = "/a/TEST/page.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/b/TEST/d/f/g/TEST2/page.html"
+  request.path = "/a/b/TEST/d/f/g/TEST2/page.html"
   routerHandler(request)
 
-  request.uri = "/a/TEST/b/TEST2/page.html"
+  request.path = "/a/TEST/b/TEST2/page.html"
   routerHandler(request)
 
-  request.uri = "/TEST/page.html&3"
+  request.path = "/TEST/page.html&3"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/TEST/TEST2/"
+  request.path = "/TEST/TEST2/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/TEST/TEST2/page.html"
+  request.path = "/TEST/TEST2/page.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/TEST/TEST2/"
+  request.path = "/a/TEST/TEST2/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a/TEST/TEST2/page.html"
+  request.path = "/a/TEST/TEST2/page.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -300,21 +300,21 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/"
+  request.path = "/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/page/thing/do.html"
+  request.path = "/page/thing/do.html"
   routerHandler(request)
 
-  request.uri = "/2page/thing/do.html"
+  request.path = "/2page/thing/do.html"
   routerHandler(request)
 
-  request.uri = "/wowpage/do.html"
+  request.path = "/wowpage/do.html"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/wowpage/a/do.htm"
+  request.path = "/wowpage/a/do.htm"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -334,20 +334,20 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/a"
+  request.path = "/a"
   routerHandler(request)
 
-  request.uri = "/aa"
+  request.path = "/aa"
   routerHandler(request)
 
-  request.uri = "/somethinga"
+  request.path = "/somethinga"
   routerHandler(request)
 
-  request.uri = "/a/"
+  request.path = "/a/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/something"
+  request.path = "/something"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -367,23 +367,23 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/something"
+  request.path = "/something"
   routerHandler(request)
 
-  request.uri = "/asomething"
+  request.path = "/asomething"
   routerHandler(request)
 
-  request.uri = "/somethingb"
+  request.path = "/somethingb"
   routerHandler(request)
 
-  request.uri = "/asomethingb"
+  request.path = "/asomethingb"
   routerHandler(request)
 
-  request.uri = "/something/"
+  request.path = "/something/"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/something/else"
+  request.path = "/something/else"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
@@ -403,19 +403,19 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/a"
+  request.path = "/a"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/ab"
+  request.path = "/ab"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/asomethingb"
+  request.path = "/asomethingb"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a*b"
+  request.path = "/a*b"
   routerHandler(request)
 
 block:
@@ -435,19 +435,19 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/a"
+  request.path = "/a"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/ab"
+  request.path = "/ab"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/asomethingb"
+  request.path = "/asomethingb"
   doAssertRaises AssertionDefect:
     routerHandler(request)
 
-  request.uri = "/a**b"
+  request.path = "/a**b"
   routerHandler(request)
 
 block:
@@ -472,14 +472,14 @@ block:
   router.errorHandler = proc(request: Request, e: ref Exception) =
     doAssert false
 
-  proc routeHandler1(request: RoutedRequest) =
+  proc routeHandler1(request: Request) =
     doAssert "id" in request.pathParams
     doAssert request.pathParams.len == 1
     doAssert request.pathParams["id"] == "123"
 
   router.get("/@id", routeHandler1)
 
-  proc routeHandler2(request: RoutedRequest) =
+  proc routeHandler2(request: Request) =
     doAssert "name" in request.pathParams
     doAssert "id" in request.pathParams
     doAssert request.pathParams.len == 2
@@ -489,7 +489,7 @@ block:
   router.get("/@name/@id", routeHandler2)
 
 
-  proc routeHandler3(request: RoutedRequest) =
+  proc routeHandler3(request: Request) =
     doAssert "first" in request.pathParams
     doAssert "second" in request.pathParams
     doAssert request.pathParams.len == 2
@@ -503,11 +503,11 @@ block:
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
   request.httpMethod = "GET"
 
-  request.uri = "/123"
+  request.path = "/123"
   routerHandler(request)
 
-  request.uri = "/abc/123"
+  request.path = "/abc/123"
   routerHandler(request)
 
-  request.uri = "/a/zzz/b"
+  request.path = "/a/zzz/b"
   routerHandler(request)

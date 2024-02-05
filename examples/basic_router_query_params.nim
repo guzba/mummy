@@ -2,7 +2,7 @@ import mummy, mummy/routers
 
 ## http://localhost:8080/search?name=foo
 
-proc searchHandler(request: RoutedRequest) =
+proc searchHandler(request: Request) =
   var headers: HttpHeaders
   headers["Content-Type"] = "text/plain"
   request.respond(200, headers, "Name: " & request.queryParams["name"])

@@ -30,7 +30,7 @@ var
 initLock(lock)
 
 # This is the HTTP handler for /* requests. These requests are upgraded to websockets.
-proc upgradeHandler(request: RoutedRequest) =
+proc upgradeHandler(request: Request) =
   let channel = request.uri[1 .. ^1] # Everything after / is the channel name.
 
   # We need to take the lock on global memory, upgrade to websocket and store

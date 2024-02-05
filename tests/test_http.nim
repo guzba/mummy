@@ -1,6 +1,7 @@
 import httpclient, mummy, zippy
 
 proc handler(request: Request) =
+  doAssert request.uri == request.path
   case request.uri:
   of "/":
     if request.httpMethod == "GET":

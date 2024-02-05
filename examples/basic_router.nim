@@ -1,6 +1,6 @@
 import mummy, mummy/routers
 
-proc indexHandler(request: RoutedRequest) =
+proc indexHandler(request: Request) =
   var headers: HttpHeaders
   headers["Content-Type"] = "text/plain"
   request.respond(200, headers, "Hello, World!")
