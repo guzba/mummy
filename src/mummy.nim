@@ -8,7 +8,8 @@ when not compileOption("threads"):
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
     std/parseutils, std/random, std/selectors, std/sets, crunchy, std/strutils,
-    std/tables, std/times, webby/httpheaders, zippy, std/options
+    std/tables, std/times, webby/httpheaders, webby/queryparams, webby/urls,
+    zippy, std/options
 
 when defined(linux):
   when defined(nimdoc):
@@ -22,7 +23,7 @@ when defined(linux):
 
 import std/locks
 
-export Port, common, httpheaders
+export Port, common, httpheaders, queryparams
 
 const
   listenBacklogLen = 128
@@ -35,12 +36,15 @@ let
 
 type
   RequestObj* = object
-    httpVersion*: HttpVersion
-    httpMethod*: string
-    uri*: string
-    headers*: HttpHeaders
-    body*: string
-    remoteAddress*: string
+    httpVersion*: HttpVersion ## HTTP version from the request line.
+    httpMethod*: string ## HTTP method from the request line.
+    uri*: string ## Raw URI from the HTTP request line.
+    path*: string ## Decoded request URI path.
+    queryParams*: QueryParams ## Decoded request query parameter key-value pairs.
+    pathParams*: PathParams ## Router named path parameter key-value pairs.
+    headers*: HttpHeaders ## HTTP headers key-value pairs.
+    body*: string ## Request body.
+    remoteAddress*: string ## Network address of the request sender.
     server: Server
     clientSocket: SocketHandle
     clientId: uint64
@@ -124,11 +128,15 @@ type
       requestCounter: int # Incoming request incs, outgoing response decs
 
   IncomingRequestState = object
-    headersParsed, chunked: bool
+    headersParsed: bool
+    chunked: bool
     loggedUnexpectedData: bool
     contentLength: int
     httpVersion: HttpVersion
-    httpMethod, uri: string
+    httpMethod: string
+    uri: string
+    path: string
+    queryParams: QueryParams
     headers: HttpHeaders
     body: string
 
@@ -734,6 +742,8 @@ proc popRequest(
   result.httpVersion = dataEntry.requestState.httpVersion
   result.httpMethod = move dataEntry.requestState.httpMethod
   result.uri = move dataEntry.requestState.uri
+  result.path = move dataEntry.requestState.path
+  result.queryParams = move dataEntry.requestState.queryParams
   result.headers = move dataEntry.requestState.headers
   result.body = move dataEntry.requestState.body
   result.body.setLen(dataEntry.requestState.contentLength)
@@ -810,6 +820,17 @@ proc afterRecvHttp(
         if space2 == -1:
           return true # Invalid request line, close the connection
         dataEntry.requestState.uri = dataEntry.recvBuf[space1 + 1 ..< space2]
+        try:
+          var url = parseUrl(dataEntry.requestState.uri)
+          dataEntry.requestState.path = move url.path
+          dataEntry.requestState.queryParams = move url.query
+        except:
+          server.log(
+            DebugLevel,
+            "Dropped connection, invalid request URI: " &
+            dataEntry.requestState.uri
+          )
+          return true # Invalid request URI, close the connection
         if dataEntry.recvBuf.find(
           ' ',
           space2 + 1,

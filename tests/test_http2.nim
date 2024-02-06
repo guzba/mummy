@@ -6,7 +6,9 @@ type TestObject = object
   val: int
 
 proc handler(request: Request) =
-  case request.uri:
+  doAssert "v" in request.queryParams
+  doAssert request.queryParams.len == 1
+  case request.path:
   of "/":
     if request.httpMethod == "POST":
       var headers: mummy.HttpHeaders
@@ -39,7 +41,7 @@ proc requesterProc() =
     let client = newHttpClient()
     var to: TestObject
     to.val = rand(0 ..< 100)
-    let response = client.post("http://localhost:8081/", toJson(to))
+    let response = client.post("http://localhost:8081/?v=" & $i, toJson(to))
     doAssert fromJson(response.body, TestObject).val == to.val + 1
 
 for requesterThread in requesterThreads.mitems:
