@@ -1,4 +1,4 @@
-import mummy, std/strutils, std/options
+import ../mummy, std/strutils, std/options
 
 export options
 

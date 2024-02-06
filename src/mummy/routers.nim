@@ -1,4 +1,4 @@
-import mummy, std/strutils, webby/urls
+import ../mummy, std/strutils, webby/urls
 
 export queryparams
 
