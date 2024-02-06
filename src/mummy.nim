@@ -825,7 +825,11 @@ proc afterRecvHttp(
           dataEntry.requestState.path = move url.path
           dataEntry.requestState.queryParams = move url.query
         except:
-          server.log(DebugLevel, "Dropped connection, invalid request URI")
+          server.log(
+            DebugLevel,
+            "Dropped connection, invalid request URI: " &
+            dataEntry.requestState.uri
+          )
           return true # Invalid request URI, close the connection
         if dataEntry.recvBuf.find(
           ' ',
