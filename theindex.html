@@ -21,7 +21,7 @@
   <div class="document" id="documentId">
     <div class="container">
       <h1 class="title">Index</h1>
-      Modules: <a href="mummy.html">mummy</a>, <a href="mummy/common.html">mummy/common</a>, <a href="mummy/internal.html">mummy/internal</a>.<br/><p /><h2>API symbols</h2>
+      Modules: <a href="mummy.html">mummy</a>, <a href="mummy/common.html">mummy/common</a>, <a href="mummy/internal.html">mummy/internal</a>, <a href="routers.html">routers</a>.<br/><p /><h2>API symbols</h2>
 <dl><dt><a name="%60%24%60" href="#%60%24%60"><span>`$`:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: proc `$`(request: Request): string" href="mummy.html#%24%2CRequest">mummy: proc `$`(request: Request): string</a></li>
@@ -35,6 +35,12 @@
 <dt><a name="%60%5B%5D%60" href="#%60%5B%5D%60"><span>`[]`:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="common: proc `[]`(pathParams: PathParams; key: string): string" href="mummy/common.html#%5B%5D%2CPathParams%2Cstring">common: proc `[]`(pathParams: PathParams; key: string): string</a></li>
+          </ul></dd>
+<dt><a name="addRoute" href="#addRoute"><span>addRoute:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc addRoute(router: var Router; httpMethod, route: string | static string;
+         handler: RequestHandler)" href="routers.html#addRoute%2CRouter%2C%2C%2CRequestHandler">routers: proc addRoute(router: var Router; httpMethod, route: string | static string;
+         handler: RequestHandler)</a></li>
           </ul></dd>
 <dt><a name="BinaryMessage" href="#BinaryMessage"><span>BinaryMessage:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -54,6 +60,10 @@
 <li><a class="reference external"
           data-doc-search-tag="common: proc contains(pathParams: PathParams; key: string): bool" href="mummy/common.html#contains%2CPathParams%2Cstring">common: proc contains(pathParams: PathParams; key: string): bool</a></li>
           </ul></dd>
+<dt><a name="convertToHandler" href="#convertToHandler"><span>convertToHandler:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: converter convertToHandler(router: Router): RequestHandler" href="routers.html#convertToHandler.c%2CRouter">routers: converter convertToHandler(router: Router): RequestHandler</a></li>
+          </ul></dd>
 <dt><a name="currentExceptionAsMummyError" href="#currentExceptionAsMummyError"><span>currentExceptionAsMummyError:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="internal: template currentExceptionAsMummyError(): untyped" href="mummy/internal.html#currentExceptionAsMummyError.t">internal: template currentExceptionAsMummyError(): untyped</a></li>
@@ -61,6 +71,12 @@
 <dt><a name="DebugLevel" href="#DebugLevel"><span>DebugLevel:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="common: LogLevel.DebugLevel" href="mummy/common.html#DebugLevel">common: LogLevel.DebugLevel</a></li>
+          </ul></dd>
+<dt><a name="delete" href="#delete"><span>delete:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc delete(router: var Router; route: string | static string;
+       handler: RequestHandler)" href="routers.html#delete%2CRouter%2C%2CRequestHandler">routers: proc delete(router: var Router; route: string | static string;
+       handler: RequestHandler)</a></li>
           </ul></dd>
 <dt><a name="echoLogger" href="#echoLogger"><span>echoLogger:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -82,9 +98,17 @@
 <li><a class="reference external"
           data-doc-search-tag="common: LogLevel.ErrorLevel" href="mummy/common.html#ErrorLevel">common: LogLevel.ErrorLevel</a></li>
           </ul></dd>
+<dt><a name="get" href="#get"><span>get:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc get(router: var Router; route: string | static string; handler: RequestHandler)" href="routers.html#get%2CRouter%2C%2CRequestHandler">routers: proc get(router: var Router; route: string | static string; handler: RequestHandler)</a></li>
+          </ul></dd>
 <dt><a name="getOrDefault" href="#getOrDefault"><span>getOrDefault:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="common: proc getOrDefault(pathParams: PathParams; key, default: string): string" href="mummy/common.html#getOrDefault%2CPathParams%2Cstring%2Cstring">common: proc getOrDefault(pathParams: PathParams; key, default: string): string</a></li>
+          </ul></dd>
+<dt><a name="head" href="#head"><span>head:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc head(router: var Router; route: string | static string; handler: RequestHandler)" href="routers.html#head%2CRouter%2C%2CRequestHandler">routers: proc head(router: var Router; route: string | static string; handler: RequestHandler)</a></li>
           </ul></dd>
 <dt><a name="Http10" href="#Http10"><span>Http10:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -142,6 +166,16 @@
 <li><a class="reference external"
           data-doc-search-tag="mummy: WebSocketEvent.OpenEvent" href="mummy.html#OpenEvent">mummy: WebSocketEvent.OpenEvent</a></li>
           </ul></dd>
+<dt><a name="options" href="#options"><span>options:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc options(router: var Router; route: string | static string;
+        handler: RequestHandler)" href="routers.html#options%2CRouter%2C%2CRequestHandler">routers: proc options(router: var Router; route: string | static string;
+        handler: RequestHandler)</a></li>
+          </ul></dd>
+<dt><a name="patch" href="#patch"><span>patch:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc patch(router: var Router; route: string | static string; handler: RequestHandler)" href="routers.html#patch%2CRouter%2C%2CRequestHandler">routers: proc patch(router: var Router; route: string | static string; handler: RequestHandler)</a></li>
+          </ul></dd>
 <dt><a name="PathParams" href="#PathParams"><span>PathParams:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="common: type PathParams" href="mummy/common.html#PathParams">common: type PathParams</a></li>
@@ -154,9 +188,21 @@
 <li><a class="reference external"
           data-doc-search-tag="mummy: MessageKind.Pong" href="mummy.html#Pong">mummy: MessageKind.Pong</a></li>
           </ul></dd>
+<dt><a name="post" href="#post"><span>post:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc post(router: var Router; route: string | static string; handler: RequestHandler)" href="routers.html#post%2CRouter%2C%2CRequestHandler">routers: proc post(router: var Router; route: string | static string; handler: RequestHandler)</a></li>
+          </ul></dd>
+<dt><a name="put" href="#put"><span>put:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc put(router: var Router; route: string | static string; handler: RequestHandler)" href="routers.html#put%2CRouter%2C%2CRequestHandler">routers: proc put(router: var Router; route: string | static string; handler: RequestHandler)</a></li>
+          </ul></dd>
 <dt><a name="Request" href="#Request"><span>Request:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: type Request" href="mummy.html#Request">mummy: type Request</a></li>
+          </ul></dd>
+<dt><a name="RequestErrorHandler" href="#RequestErrorHandler"><span>RequestErrorHandler:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: type RequestErrorHandler" href="routers.html#RequestErrorHandler">routers: type RequestErrorHandler</a></li>
           </ul></dd>
 <dt><a name="RequestHandler" href="#RequestHandler"><span>RequestHandler:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -175,6 +221,10 @@
 <dt><a name="responded" href="#responded"><span>responded:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: proc responded(request: Request): bool" href="mummy.html#responded%2CRequest">mummy: proc responded(request: Request): bool</a></li>
+          </ul></dd>
+<dt><a name="Router" href="#Router"><span>Router:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: object Router" href="routers.html#Router">routers: object Router</a></li>
           </ul></dd>
 <dt><a name="send" href="#send"><span>send:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -197,6 +247,10 @@
           data-doc-search-tag="common: converter toBase(pathParams: var PathParams): var seq[(string, string)]" href="mummy/common.html#toBase.c%2CPathParams">common: converter toBase(pathParams: var PathParams): var seq[(string, string)]</a></li>
           <li><a class="reference external"
           data-doc-search-tag="common: converter toBase(pathParams: PathParams): lent seq[(string, string)]" href="mummy/common.html#toBase.c%2CPathParams_2">common: converter toBase(pathParams: PathParams): lent seq[(string, string)]</a></li>
+          </ul></dd>
+<dt><a name="toHandler" href="#toHandler"><span>toHandler:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="routers: proc toHandler(router: Router): RequestHandler" href="routers.html#toHandler%2CRouter">routers: proc toHandler(router: Router): RequestHandler</a></li>
           </ul></dd>
 <dt><a name="upgradeToWebSocket" href="#upgradeToWebSocket"><span>upgradeToWebSocket:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -222,7 +276,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-06 05:40:39 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-06 06:41:40 UTC</small>
       </div>
     </div>
   </div>

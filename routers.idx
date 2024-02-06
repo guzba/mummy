@@ -1,0 +1,13 @@
+nimTitle	routers	routers.html	module src/mummy/routers		0
+nim	Router	routers.html#Router	object Router		6
+nim	RequestErrorHandler	routers.html#RequestErrorHandler	type RequestErrorHandler		16
+nim	addRoute	routers.html#addRoute,Router,,,RequestHandler	proc addRoute(router: var Router; httpMethod, route: string | static string;\n         handler: RequestHandler)		23
+nim	get	routers.html#get,Router,,RequestHandler	proc get(router: var Router; route: string | static string; handler: RequestHandler)		80
+nim	head	routers.html#head,Router,,RequestHandler	proc head(router: var Router; route: string | static string; handler: RequestHandler)		88
+nim	post	routers.html#post,Router,,RequestHandler	proc post(router: var Router; route: string | static string; handler: RequestHandler)		96
+nim	put	routers.html#put,Router,,RequestHandler	proc put(router: var Router; route: string | static string; handler: RequestHandler)		104
+nim	delete	routers.html#delete,Router,,RequestHandler	proc delete(router: var Router; route: string | static string;\n       handler: RequestHandler)		112
+nim	options	routers.html#options,Router,,RequestHandler	proc options(router: var Router; route: string | static string;\n        handler: RequestHandler)		120
+nim	patch	routers.html#patch,Router,,RequestHandler	proc patch(router: var Router; route: string | static string; handler: RequestHandler)		128
+nim	toHandler	routers.html#toHandler,Router	proc toHandler(router: Router): RequestHandler		199
+nim	convertToHandler	routers.html#convertToHandler.c,Router	converter convertToHandler(router: Router): RequestHandler		288
