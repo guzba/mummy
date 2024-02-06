@@ -7,5 +7,5 @@ srcDir = "src"
 
 requires "nim >= 1.6.8"
 requires "zippy >= 0.10.9"
-requires "webby >= 0.2.0"
+requires "webby >= 0.2.1"
 requires "crunchy >= 0.1.11"
