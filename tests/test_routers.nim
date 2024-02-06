@@ -458,15 +458,10 @@ block:
 
 block:
   var pathParams: PathParams
-
   doAssert "foo" notin pathParams
-
   pathParams["foo"] = "bar"
-
   doAssert "foo" in pathParams
-
   doAssert pathParams.len == 1
-
   doAssert pathParams["foo"] == "bar"
 
 block:
@@ -493,7 +488,6 @@ block:
     doAssert request.pathParams["id"] == "123"
 
   router.get("/@name/@id", routeHandler2)
-
 
   proc routeHandler3(request: Request) =
     doAssert "first" in request.pathParams
