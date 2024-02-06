@@ -498,6 +498,15 @@ block:
 
   router.get("/@first/zzz/@second", routeHandler3)
 
+  proc routeHandler4(request: Request) =
+    doAssert "first" in request.pathParams
+    doAssert "second" in request.pathParams
+    doAssert request.pathParams.len == 2
+    doAssert request.pathParams["first"] == "a"
+    doAssert request.pathParams["second"] == "b"
+
+  router.get("/@first/*/@second", routeHandler4)
+
   let routerHandler = router.toHandler()
 
   let request = cast[Request](allocShared0(sizeof(RequestObj)))
@@ -510,4 +519,7 @@ block:
   routerHandler(request)
 
   request.path = "/a/zzz/b"
+  routerHandler(request)
+
+  request.path = "/a/wild/b"
   routerHandler(request)
