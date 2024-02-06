@@ -1,11 +1,19 @@
 nimTitle	common	mummy/common.html	module src/mummy/common		0
-nim	MummyError	mummy/common.html#MummyError	object MummyError		2
-nim	Http10	mummy/common.html#Http10	HttpVersion.Http10		4
-nim	Http11	mummy/common.html#Http11	HttpVersion.Http11		4
-nim	HttpVersion	mummy/common.html#HttpVersion	enum HttpVersion		4
-nim	DebugLevel	mummy/common.html#DebugLevel	LogLevel.DebugLevel		7
-nim	InfoLevel	mummy/common.html#InfoLevel	LogLevel.InfoLevel		7
-nim	ErrorLevel	mummy/common.html#ErrorLevel	LogLevel.ErrorLevel		7
-nim	LogLevel	mummy/common.html#LogLevel	enum LogLevel		7
-nim	LogHandler	mummy/common.html#LogHandler	type LogHandler		10
-nim	echoLogger	mummy/common.html#echoLogger,LogLevel,varargs[string]	proc echoLogger(level: LogLevel; args: varargs[string])		12
+nim	MummyError	mummy/common.html#MummyError	object MummyError		4
+nim	Http10	mummy/common.html#Http10	HttpVersion.Http10		6
+nim	Http11	mummy/common.html#Http11	HttpVersion.Http11		6
+nim	HttpVersion	mummy/common.html#HttpVersion	enum HttpVersion		6
+nim	DebugLevel	mummy/common.html#DebugLevel	LogLevel.DebugLevel		9
+nim	InfoLevel	mummy/common.html#InfoLevel	LogLevel.InfoLevel		9
+nim	ErrorLevel	mummy/common.html#ErrorLevel	LogLevel.ErrorLevel		9
+nim	LogLevel	mummy/common.html#LogLevel	enum LogLevel		9
+nim	LogHandler	mummy/common.html#LogHandler	type LogHandler		12
+nim	PathParams	mummy/common.html#PathParams	type PathParams		14
+nim	toBase	mummy/common.html#toBase.c,PathParams	converter toBase(pathParams: var PathParams): var seq[(string, string)]		16
+nim	toBase	mummy/common.html#toBase.c,PathParams_2	converter toBase(pathParams: PathParams): lent seq[(string, string)]		19
+nim	`[]`	mummy/common.html#[],PathParams,string	proc `[]`(pathParams: PathParams; key: string): string		22
+nim	`[]=`	mummy/common.html#[]=,PathParams,string,string	proc `[]=`(pathParams: var PathParams; key, value: string)		28
+nim	contains	mummy/common.html#contains,PathParams,string	proc contains(pathParams: PathParams; key: string): bool		37
+nim	getOrDefault	mummy/common.html#getOrDefault,PathParams,string,string	proc getOrDefault(pathParams: PathParams; key, default: string): string		42
+nim	echoLogger	mummy/common.html#echoLogger,LogLevel,varargs[string]	proc echoLogger(level: LogLevel; args: varargs[string])		45
+nimgrp	tobase	mummy/common.html#toBase-converters-all	converter		16

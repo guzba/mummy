@@ -57,6 +57,7 @@
 <li><a class="reference" href="#LogLevel" title="LogLevel = enum
   DebugLevel, InfoLevel, ErrorLevel">LogLevel</a></li>
 <li><a class="reference" href="#MummyError" title="MummyError = object of CatchableError">MummyError</a></li>
+<li><a class="reference" href="#PathParams" title="PathParams = distinct seq[(string, string)]">PathParams</a></li>
 
     </ul>
   </details>
@@ -65,8 +66,37 @@
   <details open>
     <summary><a class="reference reference-toplevel" href="#12" id="62">Procs</a></summary>
     <ul class="simple simple-toc-section">
-      <ul class="simple nested-toc-section">echoLogger
+      <ul class="simple nested-toc-section">[]
+  <li><a class="reference" href="#%5B%5D%2CPathParams%2Cstring" title="`[]`(pathParams: PathParams; key: string): string">`[]`(pathParams: PathParams; key: string): string</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">[]=
+  <li><a class="reference" href="#%5B%5D%3D%2CPathParams%2Cstring%2Cstring" title="`[]=`(pathParams: var PathParams; key, value: string)">`[]=`(pathParams: var PathParams; key, value: string)</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">contains
+  <li><a class="reference" href="#contains%2CPathParams%2Cstring" title="contains(pathParams: PathParams; key: string): bool">contains(pathParams: PathParams; key: string): bool</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">echoLogger
   <li><a class="reference" href="#echoLogger%2CLogLevel%2Cvarargs%5Bstring%5D" title="echoLogger(level: LogLevel; args: varargs[string])">echoLogger(level: LogLevel; args: varargs[string])</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">getOrDefault
+  <li><a class="reference" href="#getOrDefault%2CPathParams%2Cstring%2Cstring" title="getOrDefault(pathParams: PathParams; key, default: string): string">getOrDefault(pathParams: PathParams; key, default: string): string</a></li>
+
+</ul>
+
+    </ul>
+  </details>
+</li>
+<li>
+  <details open>
+    <summary><a class="reference reference-toplevel" href="#16" id="66">Converters</a></summary>
+    <ul class="simple simple-toc-section">
+      <ul class="simple nested-toc-section">toBase
+  <li><a class="reference" href="#toBase.c%2CPathParams_2" title="toBase(pathParams: PathParams): lent seq[(string, string)]">toBase(pathParams: PathParams): lent seq[(string, string)]</a></li>
+<li><a class="reference" href="#toBase.c%2CPathParams" title="toBase(pathParams: var PathParams): var seq[(string, string)]">toBase(pathParams: var PathParams): var seq[(string, string)]</a></li>
 
 </ul>
 
@@ -93,8 +123,8 @@
   <dd>
     
     
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L4" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L4" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L6" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L6" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -103,8 +133,8 @@
   <dd>
     
     
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L10" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L10" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L12" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L12" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -114,8 +144,8 @@
   <dd>
     
     
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L7" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L7" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L9" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L9" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -124,8 +154,18 @@
   <dd>
     
     
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L2" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L2" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L4" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L4" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+<div id="PathParams">
+  <dt><pre><a href="common.html#PathParams"><span class="Identifier">PathParams</span></a> <span class="Other">=</span> <span class="Keyword">distinct</span> <span class="Identifier">seq</span><span class="Other">[</span><span class="Other">(</span><span class="Identifier">string</span><span class="Other">,</span> <span class="Identifier">string</span><span class="Other">)</span><span class="Other">]</span></pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L14" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L14" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -135,15 +175,102 @@
 <div class="section" id="12">
   <h1><a class="toc-backref" href="#12">Procs</a></h1>
   <dl class="item">
-    <div id="echoLogger-procs-all">
+    <div id="[]-procs-all">
+  <div id="[],PathParams,string">
+  <dt><pre><span class="Keyword">proc</span> <a href="#%5B%5D%2CPathParams%2Cstring"><span class="Identifier">`[]`</span></a><span class="Other">(</span><span class="Identifier">pathParams</span><span class="Other">:</span> <a href="common.html#PathParams"><span class="Identifier">PathParams</span></a><span class="Other">;</span> <span class="Identifier">key</span><span class="Other">:</span> <span class="Identifier">string</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">string</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    Returns the value for key, or an empty string if the key is not present.
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L22" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L22" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+<div id="[]=-procs-all">
+  <div id="[]=,PathParams,string,string">
+  <dt><pre><span class="Keyword">proc</span> <a href="#%5B%5D%3D%2CPathParams%2Cstring%2Cstring"><span class="Identifier">`[]=`</span></a><span class="Other">(</span><span class="Identifier">pathParams</span><span class="Other">:</span> <span class="Keyword">var</span> <a href="common.html#PathParams"><span class="Identifier">PathParams</span></a><span class="Other">;</span> <span class="Identifier">key</span><span class="Other">,</span> <span class="Identifier">value</span><span class="Other">:</span> <span class="Identifier">string</span><span class="Other">)</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    Sets the value for the key. If the key is not present, this appends a new key-value pair to the end.
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L28" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L28" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+<div id="contains-procs-all">
+  <div id="contains,PathParams,string">
+  <dt><pre><span class="Keyword">proc</span> <a href="#contains%2CPathParams%2Cstring"><span class="Identifier">contains</span></a><span class="Other">(</span><span class="Identifier">pathParams</span><span class="Other">:</span> <a href="common.html#PathParams"><span class="Identifier">PathParams</span></a><span class="Other">;</span> <span class="Identifier">key</span><span class="Other">:</span> <span class="Identifier">string</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">bool</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L37" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L37" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+<div id="echoLogger-procs-all">
   <div id="echoLogger,LogLevel,varargs[string]">
   <dt><pre><span class="Keyword">proc</span> <a href="#echoLogger%2CLogLevel%2Cvarargs%5Bstring%5D"><span class="Identifier">echoLogger</span></a><span class="Other">(</span><span class="Identifier">level</span><span class="Other">:</span> <a href="common.html#LogLevel"><span class="Identifier">LogLevel</span></a><span class="Other">;</span> <span class="Identifier">args</span><span class="Other">:</span> <span class="Identifier">varargs</span><span class="Other">[</span><span class="Identifier">string</span><span class="Other">]</span><span class="Other">)</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
     <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
   <dd>
     
     This is a simple echo logger.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L12" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L12" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L45" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L45" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+<div id="getOrDefault-procs-all">
+  <div id="getOrDefault,PathParams,string,string">
+  <dt><pre><span class="Keyword">proc</span> <a href="#getOrDefault%2CPathParams%2Cstring%2Cstring"><span class="Identifier">getOrDefault</span></a><span class="Other">(</span><span class="Identifier">pathParams</span><span class="Other">:</span> <a href="common.html#PathParams"><span class="Identifier">PathParams</span></a><span class="Other">;</span> <span class="Identifier">key</span><span class="Other">,</span> <span class="Identifier">default</span><span class="Other">:</span> <span class="Identifier">string</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">string</span> {.
+    <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L42" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L42" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+
+  </dl>
+</div>
+<div class="section" id="16">
+  <h1><a class="toc-backref" href="#16">Converters</a></h1>
+  <dl class="item">
+    <div id="toBase-converters-all">
+  <div id="toBase.c,PathParams_2">
+  <dt><pre><span class="Keyword">converter</span> <a href="#toBase.c%2CPathParams_2"><span class="Identifier">toBase</span></a><span class="Other">(</span><span class="Identifier">pathParams</span><span class="Other">:</span> <a href="common.html#PathParams"><span class="Identifier">PathParams</span></a><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">lent</span> <span class="Identifier">seq</span><span class="Other">[</span><span class="Other">(</span><span class="Identifier">string</span><span class="Other">,</span> <span class="Identifier">string</span><span class="Other">)</span><span class="Other">]</span> {.
+    <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L19" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L19" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+<div id="toBase.c,PathParams">
+  <dt><pre><span class="Keyword">converter</span> <a href="#toBase.c%2CPathParams"><span class="Identifier">toBase</span></a><span class="Other">(</span><span class="Identifier">pathParams</span><span class="Other">:</span> <span class="Keyword">var</span> <a href="common.html#PathParams"><span class="Identifier">PathParams</span></a><span class="Other">)</span><span class="Other">:</span> <span class="Keyword">var</span> <span class="Identifier">seq</span><span class="Other">[</span><span class="Other">(</span><span class="Identifier">string</span><span class="Other">,</span> <span class="Identifier">string</span><span class="Other">)</span><span class="Other">]</span> {.
+    <span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/common.nim#L16" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/common.nim#L16" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -159,7 +286,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-03 01:21:17 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-06 03:09:17 UTC</small>
       </div>
     </div>
   </div>

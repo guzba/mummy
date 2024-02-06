@@ -28,6 +28,14 @@
           <li><a class="reference external"
           data-doc-search-tag="mummy: proc `$`(websocket: WebSocket): string" href="mummy.html#%24%2CWebSocket">mummy: proc `$`(websocket: WebSocket): string</a></li>
           </ul></dd>
+<dt><a name="%60%5B%5D%3D%60" href="#%60%5B%5D%3D%60"><span>`[]=`:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="common: proc `[]=`(pathParams: var PathParams; key, value: string)" href="mummy/common.html#%5B%5D%3D%2CPathParams%2Cstring%2Cstring">common: proc `[]=`(pathParams: var PathParams; key, value: string)</a></li>
+          </ul></dd>
+<dt><a name="%60%5B%5D%60" href="#%60%5B%5D%60"><span>`[]`:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="common: proc `[]`(pathParams: PathParams; key: string): string" href="mummy/common.html#%5B%5D%2CPathParams%2Cstring">common: proc `[]`(pathParams: PathParams; key: string): string</a></li>
+          </ul></dd>
 <dt><a name="BinaryMessage" href="#BinaryMessage"><span>BinaryMessage:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: MessageKind.BinaryMessage" href="mummy.html#BinaryMessage">mummy: MessageKind.BinaryMessage</a></li>
@@ -41,6 +49,10 @@
 <dt><a name="CloseEvent" href="#CloseEvent"><span>CloseEvent:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: WebSocketEvent.CloseEvent" href="mummy.html#CloseEvent">mummy: WebSocketEvent.CloseEvent</a></li>
+          </ul></dd>
+<dt><a name="contains" href="#contains"><span>contains:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="common: proc contains(pathParams: PathParams; key: string): bool" href="mummy/common.html#contains%2CPathParams%2Cstring">common: proc contains(pathParams: PathParams; key: string): bool</a></li>
           </ul></dd>
 <dt><a name="currentExceptionAsMummyError" href="#currentExceptionAsMummyError"><span>currentExceptionAsMummyError:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -69,6 +81,10 @@
 <dt><a name="ErrorLevel" href="#ErrorLevel"><span>ErrorLevel:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="common: LogLevel.ErrorLevel" href="mummy/common.html#ErrorLevel">common: LogLevel.ErrorLevel</a></li>
+          </ul></dd>
+<dt><a name="getOrDefault" href="#getOrDefault"><span>getOrDefault:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="common: proc getOrDefault(pathParams: PathParams; key, default: string): string" href="mummy/common.html#getOrDefault%2CPathParams%2Cstring%2Cstring">common: proc getOrDefault(pathParams: PathParams; key, default: string): string</a></li>
           </ul></dd>
 <dt><a name="Http10" href="#Http10"><span>Http10:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
@@ -126,6 +142,10 @@
 <li><a class="reference external"
           data-doc-search-tag="mummy: WebSocketEvent.OpenEvent" href="mummy.html#OpenEvent">mummy: WebSocketEvent.OpenEvent</a></li>
           </ul></dd>
+<dt><a name="PathParams" href="#PathParams"><span>PathParams:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="common: type PathParams" href="mummy/common.html#PathParams">common: type PathParams</a></li>
+          </ul></dd>
 <dt><a name="Ping" href="#Ping"><span>Ping:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: MessageKind.Ping" href="mummy.html#Ping">mummy: MessageKind.Ping</a></li>
@@ -172,6 +192,12 @@
 <li><a class="reference external"
           data-doc-search-tag="mummy: MessageKind.TextMessage" href="mummy.html#TextMessage">mummy: MessageKind.TextMessage</a></li>
           </ul></dd>
+<dt><a name="toBase" href="#toBase"><span>toBase:</span></a></dt><dd><ul class="simple">
+<li><a class="reference external"
+          data-doc-search-tag="common: converter toBase(pathParams: var PathParams): var seq[(string, string)]" href="mummy/common.html#toBase.c%2CPathParams">common: converter toBase(pathParams: var PathParams): var seq[(string, string)]</a></li>
+          <li><a class="reference external"
+          data-doc-search-tag="common: converter toBase(pathParams: PathParams): lent seq[(string, string)]" href="mummy/common.html#toBase.c%2CPathParams_2">common: converter toBase(pathParams: PathParams): lent seq[(string, string)]</a></li>
+          </ul></dd>
 <dt><a name="upgradeToWebSocket" href="#upgradeToWebSocket"><span>upgradeToWebSocket:</span></a></dt><dd><ul class="simple">
 <li><a class="reference external"
           data-doc-search-tag="mummy: proc upgradeToWebSocket(request: Request): WebSocket" href="mummy.html#upgradeToWebSocket%2CRequest">mummy: proc upgradeToWebSocket(request: Request): WebSocket</a></li>
@@ -196,7 +222,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-03 01:21:18 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-06 03:09:18 UTC</small>
       </div>
     </div>
   </div>
