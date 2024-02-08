@@ -913,7 +913,6 @@ proc afterRecvHttp(
         try:
           dataEntry.requestState.contentLength = strictParseInt(v)
         except:
-          server.log(DebugLevel, "Dropped connection, unable to parse Content-Length: " & v)
           return true # Parsing Content-Length failed, close the connection
       elif cmpIgnoreCase(k, "Transfer-Encoding") == 0:
         if foundTransferEncoding:
