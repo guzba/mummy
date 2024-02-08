@@ -1,4 +1,4 @@
-import common, std/nativesockets, webby/httpheaders, std/endians
+import common, std/nativesockets, webby/httpheaders, std/endians, std/strutils
 
 template currentExceptionAsMummyError*(): untyped =
   let e = getCurrentException()
@@ -106,3 +106,82 @@ proc encodeHeaders*(
   result[pos + 0] = '\r'
   result[pos + 1] = '\n'
   pos += 2
+
+template integerOutOfRangeError() =
+  raise newException(ValueError, "Parsed integer outside of valid range")
+
+template invalidDecimalIntegerError() =
+  raise newException(ValueError, "Invalid integer decimal string")
+
+template invalidHexError() =
+  raise newException(ValueError, "Invalid hex string")
+
+proc strictParseInt*(s: openarray[char]): int =
+  var
+    sign = -1
+    i = 0
+
+  if i < s.len and s[i] == '-':
+    inc i
+    sign = 1
+
+  if i == s.len: # "-"
+    invalidDecimalIntegerError()
+
+  if i < s.len:
+    if (i == 0 and s.len - i == 1 and s[i] == '0') or s[i] in {'1'..'9'}:
+      result = 0
+      while i < s.len and s[i] in {'0'..'9'}:
+        let c = ord(s[i]) - ord('0')
+        if result >= (int.low + c) div 10:
+          result = result * 10 - c
+        else:
+          integerOutOfRangeError()
+        inc i
+      if sign == -1 and result == int.low:
+        integerOutOfRangeError()
+      else:
+        result = result * sign
+
+  if i == 0 or i != s.len:
+    invalidDecimalIntegerError()
+
+proc toHexWithoutLeadingZeroes*(i: int): string =
+  if i == 0:
+    return "0"
+  result = toHex(i)
+  for i, c in result:
+    if c != '0':
+      result = result[i .. ^1]
+      break
+
+proc strictParseHex*(s: openarray[char]): int =
+  var
+    i = 0
+    bits: uint
+
+  if s.len > 1 and s[i] == '0':
+    invalidHexError()
+
+  if s.len > 16:
+    integerOutOfRangeError()
+
+  while i < s.len:
+    case s[i]
+    of '0'..'9':
+      bits = bits shl 4 or ord(s[i]).uint - ord('0').uint
+    of 'a'..'f':
+      bits = bits shl 4 or ord(s[i]).uint - ord('a').uint + 10.uint
+    of 'A'..'F':
+      bits = bits shl 4 or ord(s[i]).uint - ord('A').uint + 10.uint
+    else:
+      break
+    inc i
+
+  if i == 0 or i != s.len:
+    invalidHexError()
+
+  if bits > int.high.uint:
+    integerOutOfRangeError()
+
+  result = bits.int

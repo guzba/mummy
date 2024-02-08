@@ -911,7 +911,7 @@ proc afterRecvHttp(
           # Found both Transfer-Encoding: chunked and Content-Length headers
           return true # Close the connection
         try:
-          dataEntry.requestState.contentLength = parseInt(v)
+          dataEntry.requestState.contentLength = strictParseInt(v)
         except:
           return true # Parsing Content-Length failed, close the connection
       elif cmpIgnoreCase(k, "Transfer-Encoding") == 0:
@@ -971,12 +971,8 @@ proc afterRecvHttp(
       # After we know we've seen the end of the chunk length, parse it
       var chunkLen: int
       try:
-        discard parseHex(
-          dataEntry.recvBuf,
-          chunkLen,
-          0,
-          chunkLenEnd
-        )
+        chunkLen =
+          strictParseHex(dataEntry.recvBuf.toOpenArray(0, chunkLenEnd - 1))
       except:
         return true # Parsing chunk length failed, close the connection
 
