@@ -1,4 +1,4 @@
-import mummy {.all.}, mummy/internal, std/strutils
+import mummy {.all.}, mummy/internal
 
 block:
   var headers: HttpHeaders
