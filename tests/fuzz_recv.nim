@@ -150,7 +150,7 @@ block:
         encoded: string
       while true:
         let chunkLen = min(rand(1 ..< 4096), body.len - pos)
-        encoded &= toHex(chunkLen)
+        encoded &= toHexWithoutLeadingZeroes(chunkLen)
         encoded &= "\r\n"
         encoded &= body[pos ..< pos + chunkLen]
         encoded &= "\r\n"
@@ -172,12 +172,12 @@ block:
           clientSocket,
           dataEntry
         )
-      if not closingConnection:
-        let request = server.taskQueue.popFirst().request
-        doAssert request.headers.headerContainsToken(
-          "Transfer-Encoding", "chunked"
-        )
-        doAssert request.body == body
+      doAssert not closingConnection
+      let request = server.taskQueue.popFirst().request
+      doAssert request.headers.headerContainsToken(
+        "Transfer-Encoding", "chunked"
+      )
+      doAssert request.body == body
       server.close()
 
   block:
@@ -215,6 +215,7 @@ block:
             "Content-Length", $body.len
           )
           doAssert request.body == body
+          dec dataEntry.requestCounter
         server.close
 
       block:
