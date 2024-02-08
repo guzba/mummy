@@ -53,6 +53,9 @@ block:
     discard strictParseInt("010")
 
   doAssertRaises ValueError:
+    discard strictParseInt("10a")
+
+  doAssertRaises ValueError:
     discard strictParseInt("9223372036854775808")
 
   doAssertRaises ValueError:
