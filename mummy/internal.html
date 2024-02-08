@@ -62,6 +62,18 @@
   <li><a class="reference" href="#encodeHeaders%2Cint%2CHttpHeaders" title="encodeHeaders(statusCode: int; headers: HttpHeaders): string">encodeHeaders(statusCode: int; headers: HttpHeaders): string</a></li>
 
 </ul>
+<ul class="simple nested-toc-section">strictParseHex
+  <li><a class="reference" href="#strictParseHex%2CopenArray%5Bchar%5D" title="strictParseHex(s: openArray[char]): int">strictParseHex(s: openArray[char]): int</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">strictParseInt
+  <li><a class="reference" href="#strictParseInt%2CopenArray%5Bchar%5D" title="strictParseInt(s: openArray[char]): int">strictParseInt(s: openArray[char]): int</a></li>
+
+</ul>
+<ul class="simple nested-toc-section">toHexWithoutLeadingZeroes
+  <li><a class="reference" href="#toHexWithoutLeadingZeroes%2Cint" title="toHexWithoutLeadingZeroes(i: int): string">toHexWithoutLeadingZeroes(i: int): string</a></li>
+
+</ul>
 
     </ul>
   </details>
@@ -126,6 +138,48 @@
 </div>
 
 </div>
+<div id="strictParseHex-procs-all">
+  <div id="strictParseHex,openArray[char]">
+  <dt><pre><span class="Keyword">proc</span> <a href="#strictParseHex%2CopenArray%5Bchar%5D"><span class="Identifier">strictParseHex</span></a><span class="Other">(</span><span class="Identifier">s</span><span class="Other">:</span> <span class="Identifier">openArray</span><span class="Other">[</span><span class="Identifier">char</span><span class="Other">]</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">int</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Identifier">ValueError</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/internal.nim#L158" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/internal.nim#L158" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+<div id="strictParseInt-procs-all">
+  <div id="strictParseInt,openArray[char]">
+  <dt><pre><span class="Keyword">proc</span> <a href="#strictParseInt%2CopenArray%5Bchar%5D"><span class="Identifier">strictParseInt</span></a><span class="Other">(</span><span class="Identifier">s</span><span class="Other">:</span> <span class="Identifier">openArray</span><span class="Other">[</span><span class="Identifier">char</span><span class="Other">]</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">int</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Identifier">ValueError</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/internal.nim#L119" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/internal.nim#L119" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
+<div id="toHexWithoutLeadingZeroes-procs-all">
+  <div id="toHexWithoutLeadingZeroes,int">
+  <dt><pre><span class="Keyword">proc</span> <a href="#toHexWithoutLeadingZeroes%2Cint"><span class="Identifier">toHexWithoutLeadingZeroes</span></a><span class="Other">(</span><span class="Identifier">i</span><span class="Other">:</span> <span class="Identifier">int</span><span class="Other">)</span><span class="Other">:</span> <span class="Identifier">string</span> {.<span><span class="Other pragmadots">...</span></span><span class="pragmawrap"><span class="Identifier">raises</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span> <span class="Identifier">tags</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span><span class="Other">,</span>
+    <span class="Identifier">forbids</span><span class="Other">:</span> <span class="Other">[</span><span class="Other">]</span></span>.}</pre></dt>
+  <dd>
+    
+    
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy/internal.nim#L149" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy/internal.nim#L149" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+
+  </dd>
+</div>
+
+</div>
 
   </dl>
 </div>
@@ -155,7 +209,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-06 06:47:47 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-08 01:04:51 UTC</small>
       </div>
     </div>
   </div>

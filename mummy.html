@@ -302,8 +302,8 @@
   <dd>
     
     Cleanly stops and deallocates the server. In-flight request handler calls will be allowed to finish. No additional handler calls will be dispatched even if they are queued.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1381" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1381" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1377" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1377" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -332,8 +332,8 @@
   <dd>
     
     Creates a new HTTP server. The request handler will be called for incoming HTTP requests. The WebSocket handler will be called for WebSocket events. Calls to the HTTP, WebSocket and log handlers are made from worker threads. WebSocket events are dispatched serially per connection. This means your WebSocket handler must return from a call before the next call will be dispatched for the same connection.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1449" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1449" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1445" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1445" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -361,8 +361,8 @@
   <dd>
     
     Check if this request has been responded. Informational responses (1xx status codes) do not mark a request responded.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1515" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1515" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1511" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1511" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -390,8 +390,8 @@
   <dd>
     
     The server will serve on the address and port. The default address is localhost. Use &quot;0.0.0.0&quot; to make the server externally accessible (with caution). This call does not return unless server.close() is called from another thread.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1390" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1390" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1386" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1386" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -418,8 +418,8 @@
   <dd>
     
     This proc blocks until the server is ready to receive requests or the timeout has passed. The timeout is in floating point seconds. This is useful when writing tests, where you need to know the server is ready before you begin sending requests. If the server is already ready this returns immediately.
-    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1521" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
-<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1521" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
+    <a href="https://github.com/guzba/mummy/tree/master/src/mummy.nim#L1517" class="link-seesrc" target="_blank">Source</a>&nbsp;&nbsp;
+<a href="https://github.com/guzba/mummy/edit/devel/src/mummy.nim#L1517" class="link-seesrc" target="_blank" >Edit</a>&nbsp;&nbsp;
 
   </dd>
 </div>
@@ -441,7 +441,7 @@
       <div class="twelve-columns footer">
         <span class="nim-sprite"></span>
         <br>
-        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-06 06:47:47 UTC</small>
+        <small style="color: var(--hint);">Made with Nim. Generated: 2024-02-08 01:04:51 UTC</small>
       </div>
     </div>
   </div>
