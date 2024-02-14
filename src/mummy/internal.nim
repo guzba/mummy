@@ -110,8 +110,8 @@ proc encodeHeaders*(
 template integerOutOfRangeError() =
   raise newException(ValueError, "Parsed integer outside of valid range")
 
-template invalidDecimalIntegerError() =
-  raise newException(ValueError, "Invalid integer decimal string")
+template invalidIntegerError() =
+  raise newException(ValueError, "Invalid integer string")
 
 template invalidHexError() =
   raise newException(ValueError, "Invalid hex string")
@@ -126,7 +126,7 @@ proc strictParseInt*(s: openarray[char]): int =
     sign = 1
 
   if i == s.len: # "-"
-    invalidDecimalIntegerError()
+    invalidIntegerError()
 
   if i < s.len:
     if (i == 0 and s.len - i == 1 and s[i] == '0') or s[i] in {'1'..'9'}:
@@ -144,7 +144,7 @@ proc strictParseInt*(s: openarray[char]): int =
         result = result * sign
 
   if i == 0 or i != s.len:
-    invalidDecimalIntegerError()
+    invalidIntegerError()
 
 proc toHexWithoutLeadingZeroes*(i: int): string =
   if i == 0:
