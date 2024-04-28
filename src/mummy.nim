@@ -491,7 +491,10 @@ proc workerProc(server: Server) {.raises: [].} =
           )
         except:
           let e = getCurrentException()
-          server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
+          server.log(
+            ErrorLevel,
+            "WebSocket exception: " & e.msg & " " & e.getStackTrace()
+          )
 
         if update.get.event == CloseEvent:
           break
