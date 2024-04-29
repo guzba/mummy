@@ -1,4 +1,4 @@
-import mummy {.all.}, mummy/internal, std/strutils
+import mummy {.all.}, mummy/internal
 
 block:
   var headers: HttpHeaders
@@ -51,6 +51,9 @@ block:
 
   doAssertRaises ValueError:
     discard strictParseInt("010")
+
+  doAssertRaises ValueError:
+    discard strictParseInt("10a")
 
   doAssertRaises ValueError:
     discard strictParseInt("9223372036854775808")
