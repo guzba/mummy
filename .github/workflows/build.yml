@@ -7,6 +7,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         nim-version: ['1.6.8', '1.6.x', '2.0.x', 'stable']
+        include:
+          - nim-version: '2.0.x'
+            atomic_arc: true
 
     runs-on: ${{ matrix.os }}
 
@@ -21,6 +24,8 @@ jobs:
     - run: nimble install -y jsony
     - run: nim c -r -d:useMalloc tests/test.nim
     - run: nim c -r -d:useMalloc tests/test_http.nim
+    - run: nim c --mm:atomicArc -r -d:useMalloc tests/test_http.nim
+      if: ${{ matrix.atomic_arc }}
     - run: nim c -r -d:useMalloc tests/test_http2.nim
     - run: nim c -r -d:useMalloc tests/test_websockets.nim
     - run: nim c -r -d:useMalloc -d:mummyNoWorkers tests/fuzz_recv.nim
