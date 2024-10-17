@@ -156,13 +156,14 @@ type
     event: WebSocketEvent
     message: Message
 
-proc `$`*(request: Request): string =
+proc `$`*(request: Request): string {.gcsafe.} =
   result = request.httpMethod & " " & request.uri & " "
-  case request.httpVersion:
-  of Http10:
-    result &= http10
-  else:
-    result &= http11
+  {.gcsafe.}:
+    case request.httpVersion:
+    of Http10:
+      result &= http10
+    else:
+      result &= http11
   result &= " (" & $cast[uint](request) & ")"
 
 proc `$`*(websocket: WebSocket): string =
