@@ -27,5 +27,5 @@ nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: P
 nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1448
 nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1514
 nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1520
-nimgrp	$	mummy.html#$-procs-all	proc		159
 nimgrp	close	mummy.html#close-procs-all	proc		271
+nimgrp	$	mummy.html#$-procs-all	proc		159
