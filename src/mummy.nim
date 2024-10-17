@@ -160,9 +160,9 @@ proc `$`*(request: Request): string =
   result = request.httpMethod & " " & request.uri & " "
   case request.httpVersion:
   of Http10:
-    result &= "HTTP/1.0"
+    result &= http10
   else:
-    result &= "HTTP/1.0"
+    result &= http11
   result &= " (" & $cast[uint](request) & ")"
 
 proc `$`*(websocket: WebSocket): string =
