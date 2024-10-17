@@ -1,6 +1,7 @@
 import httpclient, mummy, zippy
 
 proc handler(request: Request) =
+  echo request
   doAssert request.uri == request.path
   case request.uri:
   of "/":
