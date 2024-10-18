@@ -17,15 +17,15 @@ nim	RequestHandler	mummy.html#RequestHandler	type RequestHandler		70
 nim	WebSocketHandler	mummy.html#WebSocketHandler	type WebSocketHandler		72
 nim	Server	mummy.html#Server	type Server		102
 nim	`$`	mummy.html#$,Request	proc `$`(request: Request): string		159
-nim	`$`	mummy.html#$,WebSocket	proc `$`(websocket: WebSocket): string		168
-nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; data: sink string; kind = TextMessage)		240
-nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		271
-nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		291
-nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		390
-nim	close	mummy.html#close,Server	proc close(server: Server)		1380
-nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1389
-nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1448
-nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1514
-nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1520
-nimgrp	close	mummy.html#close-procs-all	proc		271
+nim	`$`	mummy.html#$,WebSocket	proc `$`(websocket: WebSocket): string		169
+nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; data: sink string; kind = TextMessage)		241
+nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		272
+nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		292
+nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		391
+nim	close	mummy.html#close,Server	proc close(server: Server)		1381
+nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1390
+nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1449
+nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1515
+nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1521
+nimgrp	close	mummy.html#close-procs-all	proc		272
 nimgrp	$	mummy.html#$-procs-all	proc		159
