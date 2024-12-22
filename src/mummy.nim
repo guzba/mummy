@@ -7,9 +7,11 @@ when not compileOption("threads"):
 
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
-    std/parseutils, std/random, std/selectors, std/sets, crunchy, std/strutils,
+    std/parseutils, std/random, std/selectors, std/sets, crunchy,
     std/tables, std/times, webby/httpheaders, webby/queryparams, webby/urls,
     zippy, std/options
+
+from std/strutils import find, cmpIgnoreCase, toLowerAscii
 
 when defined(linux):
   when defined(nimdoc):
@@ -26,6 +28,7 @@ import std/locks
 export Port, common, httpheaders, queryparams
 
 const
+  whitespace = {' ', '\t'}
   listenBacklogLen = 128
   maxEventsPerSelectLoop = 64
   initialRecvBufLen = (4 * 1024) - 9 # 8 byte cap field + null terminator
@@ -189,10 +192,10 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
         if comma == -1:
           comma = v.len
         var len = comma - first
-        while len > 0 and v[first] in Whitespace:
+        while len > 0 and v[first] in whitespace:
           inc first
           dec len
-        while len > 0 and v[first + len - 1] in Whitespace:
+        while len > 0 and v[first + len - 1] in whitespace:
           dec len
         if len > 0 and len == token.len:
           var matches = true
@@ -798,11 +801,11 @@ proc afterRecvHttp(
         lineEnd = headersEnd
 
       var lineLen = lineEnd - lineStart
-      while lineLen > 0 and dataEntry.recvBuf[lineStart] in Whitespace:
+      while lineLen > 0 and dataEntry.recvBuf[lineStart] in whitespace:
         inc lineStart
         dec lineLen
       while lineLen > 0 and
-        dataEntry.recvBuf[lineStart + lineLen - 1] in Whitespace:
+        dataEntry.recvBuf[lineStart + lineLen - 1] in whitespace:
         dec lineLen
 
       if lineNum == 0: # This is the request line
@@ -877,18 +880,18 @@ proc afterRecvHttp(
             rightLen = lineStart + lineLen - rightStart
 
           while leftLen > 0 and
-            dataEntry.recvBuf[leftStart] in Whitespace:
+            dataEntry.recvBuf[leftStart] in whitespace:
             inc leftStart
             dec leftLen
           while leftLen > 0 and
-            dataEntry.recvBuf[leftStart + leftLen - 1] in Whitespace:
+            dataEntry.recvBuf[leftStart + leftLen - 1] in whitespace:
             dec leftLen
           while rightLen > 0 and
-            dataEntry.recvBuf[rightStart] in Whitespace:
+            dataEntry.recvBuf[rightStart] in whitespace:
             inc rightStart
             dec rightLen
           while leftLen > 0 and
-            dataEntry.recvBuf[rightStart + rightLen - 1] in Whitespace:
+            dataEntry.recvBuf[rightStart + rightLen - 1] in whitespace:
             dec rightLen
 
           dataEntry.requestState.headers.add((
