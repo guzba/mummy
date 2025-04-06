@@ -121,10 +121,10 @@ proc writerProc(logger: FileLogger) {.raises: [].} =
       return
 
 proc newFileLogger*(
-  filePath: string
+  file: File
 ): FileLogger {.raises: [IOError, ResourceExhaustedError].} =
   result = cast[FileLogger](allocShared0(sizeof(FileLoggerObj)))
-  result.file = open(filePath, fmAppend)
+  result.file = file
   initLock(result.queueLock)
   initLock(result.writeLock)
   initCond(result.cond)
@@ -133,3 +133,9 @@ proc newFileLogger*(
   except ResourceExhaustedError as e:
     result.destroy()
     raise e
+
+proc newFileLogger*(
+  filePath: string
+): FileLogger {.raises: [IOError, ResourceExhaustedError].} =
+  newFileLogger(open(filePath, fmAppend))
+
