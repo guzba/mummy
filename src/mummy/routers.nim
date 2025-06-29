@@ -158,7 +158,7 @@ proc defaultMethodNotAllowedHandler(request: Request) =
     request.respond(405, headers, body)
 
 proc isPartialWildcard(test: string): bool {.inline.} =
-  test.len >= 2 and test.startsWith('*') or test.endsWith('*')
+  test.len >= 2 and (test.startsWith('*') or test.endsWith('*'))
 
 proc partialWildcardMatches(partialWildcard, test: string): bool {.inline.} =
   let
@@ -278,8 +278,7 @@ proc toHandler*(router: Router): RequestHandler =
           defaultMethodNotAllowedHandler(request)
       else:
         notFound()
-    except:
-      let e = getCurrentException()
+    except Exception as e:
       if router.errorHandler != nil:
         router.errorHandler(request, e)
       else:
