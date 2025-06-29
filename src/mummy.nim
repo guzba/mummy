@@ -892,7 +892,7 @@ proc afterRecvHttp(
             dataEntry.recvBuf[rightStart + rightLen - 1] in whitespace:
             dec rightLen
 
-          # Headers must not contain control characters (0-31, 127)
+          # TODO: Headers must not contain control characters (0-31, 127)
 
           dataEntry.requestState.headers.add((
             dataEntry.recvBuf[leftStart ..< leftStart + leftLen],
