@@ -10,4 +10,4 @@ nim	delete	routers.html#delete,Router,,RequestHandler	proc delete(router: var Ro
 nim	options	routers.html#options,Router,,RequestHandler	proc options(router: var Router; route: string | static string;\n        handler: RequestHandler)		120
 nim	patch	routers.html#patch,Router,,RequestHandler	proc patch(router: var Router; route: string | static string; handler: RequestHandler)		128
 nim	toHandler	routers.html#toHandler,Router	proc toHandler(router: Router): RequestHandler		199
-nim	convertToHandler	routers.html#convertToHandler.c,Router	converter convertToHandler(router: Router): RequestHandler		288
+nim	convertToHandler	routers.html#convertToHandler.c,Router	converter convertToHandler(router: Router): RequestHandler		287
