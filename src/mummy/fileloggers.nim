@@ -113,7 +113,7 @@ proc writerProc(logger: FileLogger) {.raises: [].} =
           for line in logLines:
             write(logger.file, line)
           flushFile(logger.file)
-      except:
+      except Exception as e:
         discard # What can we do?
       logLines.setLen(0)
 

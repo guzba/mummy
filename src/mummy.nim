@@ -177,7 +177,7 @@ proc log(server: Server, level: LogLevel, args: varargs[string]) =
     return
   try:
     server.logHandler(level, args)
-  except:
+  except Exception as e:
     discard # ???
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
@@ -234,7 +234,7 @@ proc trigger(
 ) {.raises: [].} =
   try:
     event.trigger()
-  except:
+  except Exception as e:
     let err = osLastError()
     server.log(
       ErrorLevel,
@@ -337,22 +337,22 @@ proc respond*(
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfGzip)
         headers["Content-Encoding"] = "gzip"
-      except:
+      except Exception as e:
         # This should never happen since exceptions are only thrown if
         # the data format is invalid or the level is invalid
         request.server.log(
           DebugLevel,
-          "Unexpected gzip error: " & getCurrentExceptionMsg()
+          "Unexpected gzip error: " & e.msg
         )
     elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
         headers["Content-Encoding"] = "deflate"
-      except:
+      except Exception as e:
         # See gzip
         request.server.log(
           DebugLevel,
-          "Unexpected deflate error: " & getCurrentExceptionMsg()
+          "Unexpected deflate error: " & e.msg
         )
     else:
       discard
@@ -451,8 +451,7 @@ proc workerProc(server: Server) {.raises: [].} =
     if task.request != nil:
       try:
         server.handler(task.request)
-      except:
-        let e = getCurrentException()
+      except Exception as e:
         server.log(
           ErrorLevel,
           "Handler exception: " & e.msg & " " & e.getStackTrace()
@@ -493,8 +492,7 @@ proc workerProc(server: Server) {.raises: [].} =
             update.get.event,
             move update.get.message
           )
-        except:
-          let e = getCurrentException()
+        except Exception as e:
           server.log(
             ErrorLevel,
             "WebSocket exception: " & e.msg & " " & e.getStackTrace()
@@ -831,7 +829,7 @@ proc afterRecvHttp(
           var url = parseUrl(dataEntry.requestState.uri)
           dataEntry.requestState.path = move url.path
           dataEntry.requestState.queryParams = move url.query
-        except:
+        except Exception as e:
           server.log(
             DebugLevel,
             "Dropped connection, invalid request URI: " &
@@ -921,7 +919,7 @@ proc afterRecvHttp(
           return true # Close the connection
         try:
           dataEntry.requestState.contentLength = strictParseInt(v)
-        except:
+        except Exception as e:
           return true # Parsing Content-Length failed, close the connection
       elif cmpIgnoreCase(k, "Transfer-Encoding") == 0:
         if foundTransferEncoding:
@@ -982,7 +980,7 @@ proc afterRecvHttp(
       try:
         chunkLen =
           strictParseHex(dataEntry.recvBuf.toOpenArray(0, chunkLenEnd - 1))
-      except:
+      except Exception as e:
         return true # Parsing chunk length failed, close the connection
 
       if dataEntry.requestState.contentLength + chunkLen > server.maxBodyLen:
@@ -1098,7 +1096,7 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
   if server.selector != nil:
     try:
       server.selector.close()
-    except:
+    except Exception as e:
       discard # Ignore
   if server.socket.int != 0:
     server.socket.close()
@@ -1114,15 +1112,15 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     deinitLock(server.websocketQueuesLock)
     try:
       server.responseQueued.close()
-    except:
+    except Exception as e:
       discard # Ignore
     try:
       server.sendQueued.close()
-    except:
+    except Exception as e:
       discard # Ignore
     try:
       server.shutdown.close()
-    except:
+    except Exception as e:
       discard # Ignore
     `=destroy`(server[])
     deallocShared(server)
@@ -1274,7 +1272,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 sockAddrStr =
                   try:
                     getAddrString(sockAddr.addr)
-                  except:
+                  except Exception as e:
                     ""
               (socket, sockAddrStr)
             else:
@@ -1365,7 +1363,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
       let dataEntry = server.selector.getData(clientSocket)
       try:
         server.selector.unregister(clientSocket)
-      except:
+      except Exception as e:
         # Leaks DataEntry for this socket
         server.log(DebugLevel, "Error unregistering client socket")
       finally:
@@ -1437,7 +1435,7 @@ proc serve*(
 
     let dataEntry = DataEntry(kind: ServerSocketEntry)
     server.selector.registerHandle2(server.socket, {Read}, dataEntry)
-  except:
+  except Exception as e:
     server.destroy(true)
     raise currentExceptionAsMummyError()
 
@@ -1445,8 +1443,7 @@ proc serve*(
 
   try:
     server.loopForever()
-  except:
-    let e = getCurrentException()
+  except Exception as e:
     server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
     server.destroy(false)
     raise currentExceptionAsMummyError()
@@ -1513,7 +1510,7 @@ proc newServer*(
 
     for i in 0 ..< workerThreads:
       createThread(result.workerThreads[i], workerProc, result)
-  except:
+  except Exception as e:
     result.destroy(true)
     raise currentExceptionAsMummyError()
 
