@@ -77,6 +77,24 @@ proc addRoute*(
     handler: handler
   ))
 
+## Used for specific path prefixes associated with multiple routes.
+## For example:
+## var mainRouter:
+## ...
+## A sub router can be defined in other files or in the current file.
+## There are two sub routes here, users and products, defined in other files.
+## 
+## mainRouter.addRoutesWithPrefix(users, "/api/users")
+## mainRouter.addRoutesWithPrefix(products, "/api/products")
+## let server = newServer(mainRouter)
+## server.serve(Port(8080))
+proc addRoutesWithPrefix*(router: var Router, subRouter: Router, prefix: string) =
+  var path = prefix
+  if not prefix.endsWith("/"):
+    path = prefix & "/"
+  for sub in subRouter.routes:
+    router.addRoute(sub.httpMethod, path & $(sub.parts), sub.handler)
+
 proc get*(
   router: var Router,
   route: string | static string,
