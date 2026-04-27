@@ -1,31 +1,31 @@
-nimTitle	mummy	mummy.html	module src/mummy		0
-nim	RequestObj	mummy.html#RequestObj	object RequestObj		41
-nim	Request	mummy.html#Request	type Request		56
-nim	WebSocket	mummy.html#WebSocket	object WebSocket		58
-nim	Message	mummy.html#Message	object Message		63
-nim	OpenEvent	mummy.html#OpenEvent	WebSocketEvent.OpenEvent		67
-nim	MessageEvent	mummy.html#MessageEvent	WebSocketEvent.MessageEvent		67
-nim	ErrorEvent	mummy.html#ErrorEvent	WebSocketEvent.ErrorEvent		67
-nim	CloseEvent	mummy.html#CloseEvent	WebSocketEvent.CloseEvent		67
-nim	WebSocketEvent	mummy.html#WebSocketEvent	enum WebSocketEvent		67
-nim	TextMessage	mummy.html#TextMessage	MessageKind.TextMessage		70
-nim	BinaryMessage	mummy.html#BinaryMessage	MessageKind.BinaryMessage		70
-nim	Ping	mummy.html#Ping	MessageKind.Ping		70
-nim	Pong	mummy.html#Pong	MessageKind.Pong		70
-nim	MessageKind	mummy.html#MessageKind	enum MessageKind		70
-nim	RequestHandler	mummy.html#RequestHandler	type RequestHandler		73
-nim	WebSocketHandler	mummy.html#WebSocketHandler	type WebSocketHandler		75
-nim	Server	mummy.html#Server	type Server		105
-nim	`$`	mummy.html#$,Request	proc `$`(request: Request): string		162
-nim	`$`	mummy.html#$,WebSocket	proc `$`(websocket: WebSocket): string		172
-nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; data: sink string; kind = TextMessage)		244
-nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		275
-nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		295
-nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		394
-nim	close	mummy.html#close,Server	proc close(server: Server)		1384
-nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1393
-nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024): Server		1451
-nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1517
-nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1523
-nimgrp	close	mummy.html#close-procs-all	proc		275
-nimgrp	$	mummy.html#$-procs-all	proc		162
+nimTitle	mummy	mummy.html	module mummy		0
+nim	RequestObj	mummy.html#RequestObj	object RequestObj		46
+nim	Request	mummy.html#Request	type Request		61
+nim	WebSocket	mummy.html#WebSocket	object WebSocket		63
+nim	Message	mummy.html#Message	object Message		68
+nim	OpenEvent	mummy.html#OpenEvent	WebSocketEvent.OpenEvent		72
+nim	MessageEvent	mummy.html#MessageEvent	WebSocketEvent.MessageEvent		72
+nim	ErrorEvent	mummy.html#ErrorEvent	WebSocketEvent.ErrorEvent		72
+nim	CloseEvent	mummy.html#CloseEvent	WebSocketEvent.CloseEvent		72
+nim	WebSocketEvent	mummy.html#WebSocketEvent	enum WebSocketEvent		72
+nim	TextMessage	mummy.html#TextMessage	MessageKind.TextMessage		75
+nim	BinaryMessage	mummy.html#BinaryMessage	MessageKind.BinaryMessage		75
+nim	Ping	mummy.html#Ping	MessageKind.Ping		75
+nim	Pong	mummy.html#Pong	MessageKind.Pong		75
+nim	MessageKind	mummy.html#MessageKind	enum MessageKind		75
+nim	RequestHandler	mummy.html#RequestHandler	type RequestHandler		78
+nim	WebSocketHandler	mummy.html#WebSocketHandler	type WebSocketHandler		80
+nim	Server	mummy.html#Server	type Server		111
+nim	`$`	mummy.html#$,Request	proc `$`(request: Request): string		168
+nim	`$`	mummy.html#$,WebSocket	proc `$`(websocket: WebSocket): string		178
+nim	send	mummy.html#send,WebSocket,sinkstring	proc send(websocket: WebSocket; data: sink string; kind = TextMessage)		262
+nim	close	mummy.html#close,WebSocket	proc close(websocket: WebSocket)		293
+nim	respond	mummy.html#respond,Request,int,sinkHttpHeaders,sinkstring	proc respond(request: Request; statusCode: int;\n        headers: sink HttpHeaders = emptyHttpHeaders(); body: sink string = "")		313
+nim	upgradeToWebSocket	mummy.html#upgradeToWebSocket,Request	proc upgradeToWebSocket(request: Request): WebSocket		412
+nim	close	mummy.html#close,Server	proc close(server: Server)		1407
+nim	serve	mummy.html#serve,Server,Port,string	proc serve(server: Server; port: Port; address = "localhost")		1416
+nim	newServer	mummy.html#newServer,RequestHandler,WebSocketHandler,LogHandler	proc newServer(handler: RequestHandler; websocketHandler: WebSocketHandler = nil;\n          logHandler: LogHandler = nil;\n          workerThreads = max(countProcessors() * 10, 1);\n          maxHeadersLen = 8 * 1024; maxBodyLen = 1024 * 1024;\n          maxMessageLen = 64 * 1024; tcpNoDelay = true): Server		1474
+nim	responded	mummy.html#responded,Request	proc responded(request: Request): bool		1542
+nim	waitUntilReady	mummy.html#waitUntilReady,Server,float	proc waitUntilReady(server: Server; timeout: float = 10.0)		1548
+nimgrp	close	mummy.html#close-procs-all	proc		293
+nimgrp	$	mummy.html#$-procs-all	proc		168

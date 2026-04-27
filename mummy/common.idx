@@ -1,4 +1,4 @@
-nimTitle	common	mummy/common.html	module src/mummy/common		0
+nimTitle	common	mummy/common.html	module mummy/common		0
 nim	MummyError	mummy/common.html#MummyError	object MummyError		4
 nim	Http10	mummy/common.html#Http10	HttpVersion.Http10		6
 nim	Http11	mummy/common.html#Http11	HttpVersion.Http11		6

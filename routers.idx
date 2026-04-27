@@ -1,4 +1,4 @@
-nimTitle	routers	routers.html	module src/mummy/routers		0
+nimTitle	routers	routers.html	module mummy/routers		0
 nim	Router	routers.html#Router	object Router		6
 nim	RequestErrorHandler	routers.html#RequestErrorHandler	type RequestErrorHandler		16
 nim	addRoute	routers.html#addRoute,Router,,,RequestHandler	proc addRoute(router: var Router; httpMethod, route: string | static string;\n         handler: RequestHandler)		23
