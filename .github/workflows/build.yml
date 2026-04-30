@@ -1,31 +1,28 @@
 name: Github Actions
-on:
-  push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
-  workflow_dispatch:
+on: [push, pull_request]
 jobs:
   build:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        nim-version: ['2.2.6', 'stable']
+
     runs-on: ${{ matrix.os }}
+
     steps:
-      - uses: actions/checkout@v5
-      - uses: treeform/setup-nim-action@v6
-      - run: nimby install -g
-      - run: nimby install -g whisky
-      - run: nimby install -g jsony
-      - run: nim check src/mummy.nim
-      - run: nim check tests/test.nim
-      - run: nim check tests/test_http.nim
-      - run: nim check tests/test_http2.nim
-      - run: nim check tests/test_websockets.nim
-      - run: nim check -d:mummyNoWorkers tests/fuzz_recv.nim
-      - run: nim r tests/test.nim
-      - run: nim r tests/test_http.nim
-      - run: nim r tests/test_http2.nim
-      - run: nim r tests/test_websockets.nim
-      - run: nim r -d:mummyNoWorkers tests/fuzz_recv.nim
+    - uses: actions/checkout@v4
+    - uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: ${{ matrix.nim-version }}
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - run: nimble install -y
+    - run: nimble install -y whisky
+    - run: nimble install -y jsony
+    - run: nim c -r -d:useMalloc tests/test.nim
+    - run: nim c -r -d:useMalloc tests/test_http.nim
+    - run: nim c --mm:atomicArc -r -d:useMalloc tests/test_http.nim
+      if: ${{ matrix.atomic_arc }}
+    - run: nim c -r -d:useMalloc tests/test_http2.nim
+    - run: nim c -r -d:useMalloc tests/test_websockets.nim
+    - run: nim c -r -d:useMalloc -d:mummyNoWorkers tests/fuzz_recv.nim

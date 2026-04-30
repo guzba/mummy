@@ -1,26 +1,29 @@
+# Disabled on 4/27/26 due to https://github.com/guzba/mummy/actions/runs/25017060576/job/73268049322
+
 name: docs
 on:
   push:
     branches:
       - master
-  workflow_dispatch:
-permissions:
-  contents: write
 env:
+  nim-version: 'stable'
   nim-src: src/${{ github.event.repository.name }}.nim
   deploy-dir: .gh-pages
 jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: treeform/setup-nim-action@v6
-      - run: nimby install -g
-      - run: nim doc --index:on --project --git.url:https://github.com/${{ github.repository }} --git.commit:master  --out:${{ env.deploy-dir }} ${{ env.nim-src }}
-      - name: "Copy to index.html"
-        run: cp ${{ env.deploy-dir }}/${{ github.event.repository.name }}.html ${{ env.deploy-dir }}/index.html
-      - name: Deploy documents
-        uses: peaceiris/actions-gh-pages@v3
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ${{ env.deploy-dir }}
+    - uses: actions/checkout@v4
+    - uses: jiro4989/setup-nim-action@v2
+      with:
+        nim-version: ${{ matrix.nim-version }}
+        repo-token: ${{ secrets.GITHUB_TOKEN }}
+    - run: nimble install -Y
+    - run: nimble doc --index:on --git.url:https://github.com/${{ github.repository }} --git.commit:master  --out:${{ env.deploy-dir }}/ src/mummy/routers.nim
+    - run: nimble doc --index:on --project --git.url:https://github.com/${{ github.repository }} --git.commit:master  --out:${{ env.deploy-dir }} ${{ env.nim-src }}
+    - run: nim buildIndex -o:${{ env.deploy-dir }}/index.html ${{ env.deploy-dir }}
+    - name: Deploy documents
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ${{ env.deploy-dir }}
