@@ -11,7 +11,7 @@ import mummy/common, mummy/internal, std/atomics, std/base64,
     std/tables, std/times, webby/httpheaders, webby/queryparams, webby/urls,
     zippy, std/options
 
-from std/strutils import find, cmpIgnoreCase, toLowerAscii
+from std/strutils import find, cmpIgnoreCase, toHex, toLowerAscii
 
 when defined(linux):
   when defined(nimdoc):
@@ -65,12 +65,20 @@ type
     clientSocket: SocketHandle
     clientId: uint64
 
+  ResponseStream* = object
+    server: Server
+    clientSocket: SocketHandle
+    clientId: uint64
+
   Message* = object
     kind*: MessageKind
     data*: string
 
   WebSocketEvent* = enum
     OpenEvent, MessageEvent, ErrorEvent, CloseEvent
+
+  StreamEvent* = enum
+    StreamOpen, StreamWritable, StreamError, StreamClosed
 
   MessageKind* = enum
     TextMessage, BinaryMessage, Ping, Pong
@@ -83,9 +91,19 @@ type
     message: Message
   ) {.gcsafe.}
 
+  ResponseStreamHandler* = proc(
+    stream: ResponseStream,
+    event: StreamEvent
+  ) {.gcsafe.}
+
+  ResponseStreamStore = object
+    lock: Lock
+    states: Table[ResponseStream, ResponseStreamState]
+
   ServerObj = object
     handler: RequestHandler
     websocketHandler: WebSocketHandler
+    streamHandler: ResponseStreamHandler
     logHandler: LogHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
     tcpNoDelay: bool
@@ -104,6 +122,7 @@ type
     responseQueueLock: Lock
     sendQueue: Deque[OutgoingBuffer]
     sendQueueLock: Lock
+    responseStreams: ResponseStreamStore
     websocketClaimed: Table[WebSocket, bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
     websocketQueuesLock: Lock
@@ -113,6 +132,7 @@ type
   WorkerTask = object
     request: Request
     websocket: WebSocket
+    stream: ResponseStream
 
   DataEntryKind = enum
     ServerSocketEntry, ClientSocketEntry, EventEntry
@@ -134,6 +154,7 @@ type
       closeFrameQueuedAt: float64
       upgradedToWebSocket, closeFrameSent: bool
       sendsWaitingForUpgrade: seq[OutgoingBuffer]
+      responseStream: ResponseStream
       requestCounter: int # Incoming request incs, outgoing response decs
 
   IncomingRequestState = object
@@ -154,16 +175,31 @@ type
     buffer: string
     frameLen: int
 
+  SendCompletion = enum
+    NoCompletion, WebSocketCloseFrameSent, StreamChunkSent, StreamCloseSent
+
   OutgoingBuffer {.acyclic.} = ref object
     clientSocket: SocketHandle
     clientId: uint64
-    closeConnection, isWebSocketUpgrade, isCloseFrame: bool
+    closeConnection, isWebSocketUpgrade: bool
+    isStreamOpen: bool
+    completion: SendCompletion
     buffer1, buffer2: string
     bytesSent: int
+    stream: ResponseStream
 
   WebSocketUpdate = object
     event: WebSocketEvent
     message: Message
+
+  StreamUpdate = object
+    event: StreamEvent
+
+  ResponseStreamState = object
+    updates: Deque[StreamUpdate]
+    response: OutgoingBuffer
+    chunked, closeConnection: bool
+    claimed, started, writable, closeQueued, closed: bool
 
 proc `$`*(request: Request): string {.gcsafe.} =
   result = request.httpMethod & " " & request.uri & " "
@@ -177,6 +213,19 @@ proc `$`*(request: Request): string {.gcsafe.} =
 
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $cast[uint](hash(websocket))
+
+proc `==`*(a, b: ResponseStream): bool =
+  a.server == b.server and
+    a.clientSocket == b.clientSocket and
+    a.clientId == b.clientId
+
+proc hash*(stream: ResponseStream): Hash =
+  result = hash(cast[uint](stream.server))
+  result = result !& hash(stream.clientSocket)
+  result = !$ (result !& hash(stream.clientId))
+
+proc `$`*(stream: ResponseStream): string =
+  "ResponseStream " & $cast[uint](hash(stream))
 
 proc log(server: Server, level: LogLevel, args: varargs[string]) =
   if server.logHandler == nil:
@@ -212,6 +261,42 @@ proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
           if matches:
             return true
         first = comma + 1
+
+proc removeHeader(headers: var HttpHeaders, key: string) =
+  var i: int
+  while i < headers.len:
+    if cmpIgnoreCase(headers.toBase[i][0], key) == 0:
+      headers.toBase.delete(i)
+    else:
+      inc i
+
+proc postResponseStreamUpdate(
+  server: Server,
+  stream: ResponseStream,
+  update: sink StreamUpdate
+): bool {.raises: [].} =
+  ## Adds an event to a response stream queue. Returns true if a worker task
+  ## should be posted for this stream.
+  withLock server.responseStreams.lock:
+    try:
+      server.responseStreams.states[stream].updates.addLast(move update)
+      result = not server.responseStreams.states[stream].claimed
+    except KeyError:
+      discard # Not possible
+
+proc popResponseStreamUpdate(
+  server: Server,
+  stream: ResponseStream,
+  update: var StreamUpdate
+): bool {.raises: [].} =
+  withLock server.responseStreams.lock:
+    try:
+      if server.responseStreams.states[stream].updates.len > 0:
+        update = server.responseStreams.states[stream].updates.popFirst()
+        return true
+      server.responseStreams.states[stream].claimed = false
+    except KeyError:
+      discard # Not possible
 
 proc registerHandle2(
   selector: Selector[DataEntry],
@@ -300,7 +385,7 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   encodedFrame.clientSocket = websocket.clientSocket
   encodedFrame.clientId = websocket.clientId
   encodedFrame.buffer1 = encodeFrameHeader(0x8, 0)
-  encodedFrame.isCloseFrame = true
+  encodedFrame.completion = WebSocketCloseFrameSent
 
   var queueWasEmpty: bool
   withLock websocket.server.sendQueueLock:
@@ -409,6 +494,179 @@ proc respond*(
   if queueWasEmpty:
     request.server.trigger(request.server.responseQueued)
 
+proc start*(stream: ResponseStream) {.raises: [], gcsafe.} =
+  ## Starts a response stream created with `respondStream(..., start = false)`.
+  var encodedResponse: OutgoingBuffer
+
+  withLock stream.server.responseStreams.lock:
+    try:
+      var state = addr stream.server.responseStreams.states[stream]
+      if state.started:
+        return
+      state.started = true
+      encodedResponse = state.response
+    except KeyError:
+      return
+
+  var queueWasEmpty: bool
+  withLock stream.server.responseQueueLock:
+    queueWasEmpty = stream.server.responseQueue.len == 0
+    stream.server.responseQueue.addLast(encodedResponse)
+
+  if queueWasEmpty:
+    stream.server.trigger(stream.server.responseQueued)
+
+proc respondStream*(
+  request: Request,
+  statusCode = 200,
+  headers: sink HttpHeaders = emptyHttpHeaders(),
+  start = true
+): ResponseStream {.raises: [], gcsafe.} =
+  ## Starts a chunked streaming response.
+  ##
+  ## Future updates for this stream will be calls to the streamHandler provided
+  ## to `newServer`. The first event will be `StreamOpen`; writes are accepted
+  ## during `StreamOpen` and `StreamWritable`.
+  if request.responded:
+    request.server.log(
+      InfoLevel,
+      "Responding to a request that has already received a non-1xx response"
+    )
+
+  result = ResponseStream(
+    server: request.server,
+    clientSocket: request.clientSocket,
+    clientId: request.clientId
+  )
+
+  let chunked = request.httpVersion != Http10
+  var encodedResponse = OutgoingBuffer()
+  encodedResponse.clientSocket = request.clientSocket
+  encodedResponse.clientId = request.clientId
+  encodedResponse.stream = result
+  encodedResponse.isStreamOpen = true
+  encodedResponse.closeConnection = request.httpVersion == Http10
+
+  if request.headers.headerContainsToken("Connection", "close"):
+    encodedResponse.closeConnection = true
+  elif request.headers.headerContainsToken("Connection", "keep-alive"):
+    encodedResponse.closeConnection = false
+
+  if not encodedResponse.closeConnection:
+    encodedResponse.closeConnection = headers.headerContainsToken(
+      "Connection", "close"
+    )
+
+  headers.removeHeader("Content-Length")
+
+  if chunked:
+    headers["Transfer-Encoding"] = "chunked"
+  else:
+    encodedResponse.closeConnection = true
+
+  if encodedResponse.closeConnection:
+    headers["Connection"] = "close"
+  elif request.httpVersion == Http10:
+    headers["Connection"] = "keep-alive"
+
+  encodedResponse.buffer1 = encodeHeaders(statusCode, headers)
+
+  if statusCode < 100 or statusCode >= 200:
+    request.responded = true
+
+  withLock request.server.responseStreams.lock:
+    request.server.responseStreams.states[result] = ResponseStreamState(
+      updates: initDeque[StreamUpdate](),
+      response: encodedResponse,
+      chunked: chunked,
+      closeConnection: encodedResponse.closeConnection
+    )
+
+  if start:
+    result.start()
+
+proc write*(
+  stream: ResponseStream,
+  data: sink string
+): bool {.raises: [], gcsafe.} =
+  ## Attempts to enqueue one stream chunk.
+  ##
+  ## Returns false if the stream is not currently writable. A stream is writable
+  ## during `StreamOpen` and after each `StreamWritable` event until a write is
+  ## accepted.
+  if data.len == 0:
+    return true
+
+  var
+    chunked: bool
+    encodedChunk = OutgoingBuffer()
+
+  withLock stream.server.responseStreams.lock:
+    try:
+      var state = addr stream.server.responseStreams.states[stream]
+      if not state.started or not state.writable or
+        state.closeQueued or state.closed:
+        return false
+      state.writable = false
+      chunked = state.chunked
+    except KeyError:
+      return false
+
+  encodedChunk.clientSocket = stream.clientSocket
+  encodedChunk.clientId = stream.clientId
+  encodedChunk.stream = stream
+  encodedChunk.completion = StreamChunkSent
+
+  if chunked:
+    encodedChunk.buffer1 = toLowerAscii(toHex(data.len)) & "\r\n"
+    data.add("\r\n")
+    encodedChunk.buffer2 = move data
+  else:
+    encodedChunk.buffer1 = move data
+
+  var queueWasEmpty: bool
+  withLock stream.server.sendQueueLock:
+    queueWasEmpty = stream.server.sendQueue.len == 0
+    stream.server.sendQueue.addLast(move encodedChunk)
+
+  if queueWasEmpty:
+    stream.server.trigger(stream.server.sendQueued)
+
+  result = true
+
+proc close*(stream: ResponseStream) {.raises: [], gcsafe.} =
+  ## Closes a response stream after any queued stream chunk has been sent.
+  var
+    chunked, closeConnection: bool
+    encodedClose = OutgoingBuffer()
+
+  withLock stream.server.responseStreams.lock:
+    try:
+      var state = addr stream.server.responseStreams.states[stream]
+      if state.closeQueued or state.closed:
+        return
+      state.closeQueued = true
+      state.writable = false
+      chunked = state.chunked
+      closeConnection = state.closeConnection
+    except KeyError:
+      return
+
+  encodedClose.clientSocket = stream.clientSocket
+  encodedClose.clientId = stream.clientId
+  encodedClose.stream = stream
+  encodedClose.completion = StreamCloseSent
+  encodedClose.closeConnection = closeConnection
+  encodedClose.buffer1 = if chunked: "0\r\n\r\n" else: ""
+
+  var queueWasEmpty: bool
+  withLock stream.server.sendQueueLock:
+    queueWasEmpty = stream.server.sendQueue.len == 0
+    stream.server.sendQueue.addLast(move encodedClose)
+
+  if queueWasEmpty:
+    stream.server.trigger(stream.server.sendQueued)
+
 proc upgradeToWebSocket*(
   request: Request
 ): WebSocket {.raises: [MummyError], gcsafe.} =
@@ -478,7 +736,7 @@ proc workerProc(server: Server) {.raises: [].} =
           task.request.respond(500)
       `=destroy`(task.request[])
       deallocShared(task.request)
-    else: # WebSocket
+    elif task.websocket.server != nil:
       withLock server.websocketQueuesLock:
         if server.websocketClaimed.getOrDefault(task.websocket, true):
           # If this websocket has been claimed or if it is not present in
@@ -518,6 +776,41 @@ proc workerProc(server: Server) {.raises: [].} =
 
         if update.get.event == CloseEvent:
           break
+    else: # Response stream
+      # If this stream has been claimed or if it is not present in the table
+      # (which indicates it has been closed), skip this task.
+      var streamClaimed: bool
+      withLock server.responseStreams.lock:
+        try:
+          if server.responseStreams.states[task.stream].claimed:
+            return
+          server.responseStreams.states[task.stream].claimed = true
+          streamClaimed = true
+        except KeyError:
+          discard
+      if not streamClaimed:
+        return
+
+      while true:
+        var update: StreamUpdate
+        if not server.popResponseStreamUpdate(task.stream, update):
+          break
+
+        if update.event == StreamClosed:
+          withLock server.responseStreams.lock:
+            server.responseStreams.states.del(task.stream)
+
+        try:
+          if server.streamHandler != nil:
+            server.streamHandler(task.stream, update.event)
+        except Exception as e:
+          server.log(
+            ErrorLevel,
+            "ResponseStream exception: " & e.msg & " " & e.getStackTrace()
+          )
+
+        if update.event == StreamClosed:
+          break
 
   when defined(mummyCheck22398):
     var loggedExceptionLeak: bool
@@ -547,6 +840,65 @@ proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
   withLock server.taskQueueLock:
     server.taskQueue.addLast(task)
   signal(server.taskQueueCond)
+
+proc postStreamUpdate(
+  stream: ResponseStream,
+  update: sink StreamUpdate
+) {.raises: [].} =
+  if stream.server.streamHandler == nil:
+    stream.server.log(DebugLevel, "ResponseStream event but no stream handler")
+    if update.event == StreamClosed:
+      withLock stream.server.responseStreams.lock:
+        stream.server.responseStreams.states.del(stream)
+    return
+
+  if stream.server.postResponseStreamUpdate(stream, move update):
+    stream.server.postTask(WorkerTask(stream: stream))
+
+proc markStreamOpen(stream: ResponseStream) {.raises: [].} =
+  var shouldPost: bool
+  withLock stream.server.responseStreams.lock:
+    try:
+      var state = addr stream.server.responseStreams.states[stream]
+      if not state.closed:
+        state.writable = true
+        shouldPost = true
+    except KeyError:
+      discard
+
+  if shouldPost:
+    stream.postStreamUpdate(StreamUpdate(event: StreamOpen))
+
+proc markStreamWritable(stream: ResponseStream) {.raises: [].} =
+  var shouldPost: bool
+  withLock stream.server.responseStreams.lock:
+    try:
+      var state = addr stream.server.responseStreams.states[stream]
+      if not state.closeQueued and not state.closed:
+        state.writable = true
+        shouldPost = true
+    except KeyError:
+      discard
+
+  if shouldPost:
+    stream.postStreamUpdate(StreamUpdate(event: StreamWritable))
+
+proc finishStream(stream: ResponseStream, error: bool) {.raises: [].} =
+  var shouldPost: bool
+  withLock stream.server.responseStreams.lock:
+    try:
+      var state = addr stream.server.responseStreams.states[stream]
+      if not state.closed:
+        state.closed = true
+        state.writable = false
+        shouldPost = true
+    except KeyError:
+      discard
+
+  if shouldPost:
+    if error:
+      stream.postStreamUpdate(StreamUpdate(event: StreamError))
+    stream.postStreamUpdate(StreamUpdate(event: StreamClosed))
 
 proc postWebSocketUpdate(
   websocket: WebSocket,
@@ -582,7 +934,7 @@ proc sendCloseFrame(
   outgoingBuffer.clientSocket = clientSocket
   outgoingBuffer.clientId = dataEntry.clientId
   outgoingBuffer.buffer1 = encodeFrameHeader(0x8, 0)
-  outgoingBuffer.isCloseFrame = true
+  outgoingBuffer.completion = WebSocketCloseFrameSent
   outgoingBuffer.closeConnection = closeConnection
   dataEntry.outgoingBuffers.addLast(outgoingBuffer)
   dataEntry.closeFrameQueuedAt = epochTime()
@@ -1100,8 +1452,16 @@ proc afterSend(
     # The current outgoing buffer for this socket has been fully sent
     # Remove it from the outgoing buffer queue
     dataEntry.outgoingBuffers.shrink(fromFirst = 1)
-    if outgoingBuffer.isCloseFrame:
+    case outgoingBuffer.completion:
+    of StreamChunkSent:
+      outgoingBuffer.stream.markStreamWritable()
+    of StreamCloseSent:
+      dataEntry.responseStream = ResponseStream()
+      outgoingBuffer.stream.finishStream(false)
+    of WebSocketCloseFrameSent:
       dataEntry.closeFrameSent = true
+    of NoCompletion:
+      discard
     if outgoingBuffer.closeConnection:
       return true
   # If we don't have any more outgoing buffers, update the selector
@@ -1127,6 +1487,7 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     deinitCond(server.taskQueueCond)
     deinitLock(server.responseQueueLock)
     deinitLock(server.sendQueueLock)
+    deinitLock(server.responseStreams.lock)
     deinitLock(server.websocketQueuesLock)
     try:
       server.responseQueued.close()
@@ -1200,6 +1561,10 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             clientDataEntry.requestCounter =
               max(clientDataEntry.requestCounter - 1, 0)
 
+            if encodedResponse.isStreamOpen:
+              clientDataEntry.responseStream = encodedResponse.stream
+              encodedResponse.stream.markStreamOpen()
+
             if encodedResponse.isWebSocketUpgrade:
               clientDataEntry.upgradedToWebSocket = true
               let websocket = WebSocket(
@@ -1218,14 +1583,18 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                     server.log(DebugLevel, "Dropped message after WebSocket close")
                   else:
                     clientDataEntry.outgoingBuffers.addLast(encodedFrame)
-                    if encodedFrame.isCloseFrame:
+                    if encodedFrame.completion == WebSocketCloseFrameSent:
                       clientDataEntry.closeFrameQueuedAt = epochTime()
                 clientDataEntry.sendsWaitingForUpgrade.setLen(0)
           else:
             # Was this file descriptor reused for a different client?
             server.log(DebugLevel, "Dropped response to disconnected client")
+            if encodedResponse.isStreamOpen:
+              encodedResponse.stream.finishStream(true)
         else:
           server.log(DebugLevel, "Dropped response to disconnected client")
+          if encodedResponse.isStreamOpen:
+            encodedResponse.stream.finishStream(true)
 
     if sendQueuedTriggered:
       # If we have any sends queued move them to the outgoing buffer queue of
@@ -1240,13 +1609,23 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           let clientDataEntry =
             server.selector.getData(encodedFrame.clientSocket)
           if encodedFrame.clientId == clientDataEntry.clientId:
-            # Have we sent the upgrade response yet?
-            if clientDataEntry.upgradedToWebSocket:
+            if encodedFrame.completion in {StreamChunkSent, StreamCloseSent}:
+              if clientDataEntry.responseStream == encodedFrame.stream:
+                clientDataEntry.outgoingBuffers.addLast(encodedFrame)
+                server.selector.updateHandle2(
+                  encodedFrame.clientSocket,
+                  {Read, Write}
+                )
+              else:
+                server.log(DebugLevel, "Dropped stream chunk after stream close")
+                encodedFrame.stream.finishStream(true)
+            elif clientDataEntry.upgradedToWebSocket:
+              # Have we sent the upgrade response yet?
               if clientDataEntry.closeFrameQueuedAt > 0:
                 server.log(DebugLevel, "Dropped message after WebSocket close")
               else:
                 clientDataEntry.outgoingBuffers.addLast(encodedFrame)
-                if encodedFrame.isCloseFrame:
+                if encodedFrame.completion == WebSocketCloseFrameSent:
                   clientDataEntry.closeFrameQueuedAt = epochTime()
                 server.selector.updateHandle2(
                   encodedFrame.clientSocket,
@@ -1258,8 +1637,12 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           else:
             # Was this file descriptor reused for a different client?
             server.log(DebugLevel, "Dropped message to disconnected client")
+            if encodedFrame.completion in {StreamChunkSent, StreamCloseSent}:
+              encodedFrame.stream.finishStream(true)
         else:
           server.log(DebugLevel, "Dropped message to disconnected client")
+          if encodedFrame.completion in {StreamChunkSent, StreamCloseSent}:
+            encodedFrame.stream.finishStream(true)
 
     if shutdownTriggered:
       server.destroy(true)
@@ -1401,6 +1784,8 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           websocket.postWebSocketUpdate(error)
         var close = WebSocketUpdate(event: CloseEvent)
         websocket.postWebSocketUpdate(close)
+      if dataEntry.responseStream.server != nil:
+        dataEntry.responseStream.finishStream(true)
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
   ## Cleanly stops and deallocates the server.
@@ -1473,6 +1858,7 @@ proc newServer*(
   handler: RequestHandler,
   websocketHandler: WebSocketHandler = nil,
   logHandler: LogHandler = nil,
+  streamHandler: ResponseStreamHandler = nil,
   workerThreads = max(countProcessors() * 10, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024, # 1 MB
@@ -1481,7 +1867,8 @@ proc newServer*(
 ): Server {.raises: [MummyError].} =
   ## Creates a new HTTP server. The request handler will be called for incoming
   ## HTTP requests. The WebSocket handler will be called for WebSocket events.
-  ## Calls to the HTTP, WebSocket and log handlers are made from worker threads.
+  ## The stream handler will be called for response stream events.
+  ## Calls to the HTTP, WebSocket, stream and log handlers are made from worker threads.
   ## WebSocket events are dispatched serially per connection. This means your
   ## WebSocket handler must return from a call before the next call will be
   ## dispatched for the same connection.
@@ -1496,6 +1883,7 @@ proc newServer*(
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
+  result.streamHandler = streamHandler
   result.logHandler = if logHandler != nil: logHandler else: echoLogger
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
@@ -1529,6 +1917,7 @@ proc newServer*(
     initCond(result.taskQueueCond)
     initLock(result.responseQueueLock)
     initLock(result.sendQueueLock)
+    initLock(result.responseStreams.lock)
     initLock(result.websocketQueuesLock)
 
     for i in 0 ..< workerThreads:
