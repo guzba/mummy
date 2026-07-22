@@ -1468,21 +1468,19 @@ proc createListeningSocket(
   finally:
     freeAddrInfo(aiList)
 
-proc serveAddresses(
+proc serveBindings(
   server: Server,
-  port: Port,
-  addresses: openArray[string],
+  bindings: openArray[(string, Port)],
   domain: Domain,
   ipv6Only: bool
 ) {.raises: [MummyError].} =
   if server.listeningSockets.len > 0:
     raise newException(MummyError, "Server already has a socket")
+  if bindings.len == 0:
+    raise newException(MummyError, "At least one address and port is required")
 
   try:
-    if addresses.len == 0:
-      raise newException(ValueError, "At least one address is required")
-
-    for address in addresses:
+    for (address, port) in bindings:
       let listeningSocket = createListeningSocket(
         address,
         port,
@@ -1515,19 +1513,17 @@ proc serve*(
   ## caution).
   ## This call does not return unless server.close() is called from another
   ## thread.
-  server.serveAddresses(port, [address], Domain.AF_INET, false)
+  server.serveBindings([(address, port)], Domain.AF_INET, false)
 
 proc serve*(
   server: Server,
-  port: Port,
-  addresses: openArray[string]
+  bindings: openArray[(string, Port)]
 ) {.raises: [MummyError].} =
-  ## The server will serve on every address using the same port. IPv4 and IPv6
-  ## addresses can be used together. Use `["0.0.0.0", "::"]` to listen on all
-  ## IPv4 and IPv6 interfaces (with caution).
+  ## The server will serve on every `(address, port)` binding. IPv4 and IPv6
+  ## addresses and different ports can be used together.
   ## This call does not return unless server.close() is called from another
   ## thread.
-  server.serveAddresses(port, addresses, Domain.AF_UNSPEC, true)
+  server.serveBindings(bindings, Domain.AF_UNSPEC, true)
 
 proc newServer*(
   handler: RequestHandler,

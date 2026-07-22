@@ -1,11 +1,19 @@
 import mummy, std/[assertions, nativesockets, os, strutils]
 
-const testPort = Port(18081)
+const
+  testPort = Port(18081)
+  otherPort = Port(18082)
 
 proc handler(request: Request) =
   request.respond(200, body = "Hello from Mummy!")
 
-proc fetch(address: string, domain: Domain): string =
+block emptyBindings:
+  let emptyServer = newServer(handler)
+  doAssertRaises MummyError:
+    emptyServer.serve([])
+  emptyServer.close()
+
+proc fetch(address: string, port: Port, domain: Domain): string =
   let socket = createNativeSocket(
     domain,
     SockType.SOCK_STREAM,
@@ -18,7 +26,7 @@ proc fetch(address: string, domain: Domain): string =
   try:
     let ai = getAddrInfo(
       address,
-      testPort,
+      port,
       domain,
       SockType.SOCK_STREAM,
       Protocol.IPPROTO_TCP,
@@ -50,14 +58,21 @@ var requesterThread: Thread[void]
 proc requesterProc() =
   server.waitUntilReady()
   try:
-    let ipv4Response = fetch("127.0.0.1", Domain.AF_INET)
+    let ipv4Response = fetch("127.0.0.1", testPort, Domain.AF_INET)
     doAssert ipv4Response.endsWith("Hello from Mummy!")
 
-    let ipv6Response = fetch("::1", Domain.AF_INET6)
+    let ipv6Response = fetch("::1", testPort, Domain.AF_INET6)
     doAssert ipv6Response.endsWith("Hello from Mummy!")
+
+    let otherPortResponse = fetch("127.0.0.1", otherPort, Domain.AF_INET)
+    doAssert otherPortResponse.endsWith("Hello from Mummy!")
   finally:
     server.close()
 
 createThread(requesterThread, requesterProc)
 
-server.serve(testPort, ["0.0.0.0", "::"])
+server.serve([
+  ("0.0.0.0", testPort),
+  ("::", testPort),
+  ("127.0.0.1", otherPort)
+])
