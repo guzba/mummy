@@ -7,7 +7,7 @@ when not compileOption("threads"):
 
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
-    std/parseutils, std/random, std/selectors, std/sets, crunchy,
+    std/monotimes, std/parseutils, std/random, std/selectors, std/sets, crunchy,
     std/tables, std/times, webby/httpheaders, webby/queryparams, webby/urls,
     zippy, std/options
 
@@ -27,7 +27,7 @@ when defined(windows):
   from std/winlean import TCP_NODELAY
   const ipv6OnlyOption = 27 # IPV6_V6ONLY from Winsock2.
 elif defined(posix):
-  from std/posix import IPV6_V6ONLY, TCP_NODELAY
+  from std/posix import ECONNABORTED, IPV6_V6ONLY, TCP_NODELAY
 
 import std/locks
 
@@ -1109,6 +1109,52 @@ proc afterSend(
   if dataEntry.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
+proc acceptClient(
+  listeningSocket: SocketHandle
+): (SocketHandle, string) {.raises: [OSError].} =
+  var
+    peerAddress: Sockaddr_storage
+    peerAddressLen = sizeof(peerAddress).SockLen
+
+  let clientSocket =
+    when defined(linux) and not defined(nimdoc):
+      accept4(
+        listeningSocket,
+        cast[ptr SockAddr](addr peerAddress),
+        addr peerAddressLen,
+        SOCK_CLOEXEC or SOCK_NONBLOCK
+      )
+    else:
+      nativesockets.accept(
+        listeningSocket,
+        cast[ptr SockAddr](addr peerAddress),
+        addr peerAddressLen
+      )
+
+  if clientSocket == osInvalidSocket:
+    return (clientSocket, "")
+
+  when not defined(linux):
+    when declared(setInheritable):
+      if not clientSocket.setInheritable(false):
+        let error = osLastError()
+        clientSocket.close()
+        raiseOSError(error)
+
+  let remoteAddress =
+    try:
+      getAddrString(cast[ptr SockAddr](addr peerAddress))
+    except Exception:
+      ""
+
+  (clientSocket, remoteAddress)
+
+proc isTransientAcceptError(error: OSErrorCode): bool =
+  when defined(windows):
+    error.int32 in [WSAEWOULDBLOCK, WSAECONNRESET, WSAECONNABORTED]
+  else:
+    error.int32 in [EAGAIN, EWOULDBLOCK, EINTR, ECONNABORTED]
+
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
   withLock server.taskQueueLock:
     server.destroyCalled = true
@@ -1278,44 +1324,27 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         if Read in readyKey.events:
           let listeningSocket = readyKey.fd.SocketHandle
           let (clientSocket, remoteAddress) =
-            when defined(linux) and not defined(nimdoc):
-              var
-                sockAddr: SockAddr
-                addrLen = sizeof(sockAddr).SockLen
-              let
-                socket =
-                  accept4(
-                    listeningSocket,
-                    sockAddr.addr,
-                    addrLen.addr,
-                    SOCK_CLOEXEC or SOCK_NONBLOCK
-                  )
-                sockAddrStr =
-                  try:
-                    getAddrString(sockAddr.addr)
-                  except Exception as e:
-                    ""
-              (socket, sockAddrStr)
-            else:
-              listeningSocket.accept()
+            acceptClient(listeningSocket)
 
           if clientSocket == osInvalidSocket:
-            continue
+            let error = osLastError()
+            if not isTransientAcceptError(error):
+              raiseOSError(error)
+          else:
+            when not defined(linux):
+              # Not needed on linux where we use SOCK_NONBLOCK.
+              clientSocket.setBlocking(false)
 
-          when not defined(linux):
-            # Not needed on linux where we can use SOCK_NONBLOCK
-            clientSocket.setBlocking(false)
+            if server.tcpNoDelay:
+              server.setNoDelay(clientSocket)
 
-          if server.tcpNoDelay:
-            server.setNoDelay(clientSocket)
+            server.clientSockets.incl(clientSocket)
 
-          server.clientSockets.incl(clientSocket)
-
-          let dataEntry = DataEntry(kind: ClientSocketEntry)
-          dataEntry.clientId = server.rand.next()
-          dataEntry.remoteAddress = remoteAddress
-          dataEntry.recvBuf.setLen(initialRecvBufLen)
-          server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
+            let dataEntry = DataEntry(kind: ClientSocketEntry)
+            dataEntry.clientId = server.rand.next()
+            dataEntry.remoteAddress = remoteAddress
+            dataEntry.recvBuf.setLen(initialRecvBufLen)
+            server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
       elif readyDataEntry.kind == ClientSocketEntry:
         if Error in readyKey.events:
           needClosing.incl(readyKey.fd.SocketHandle)
@@ -1605,13 +1634,11 @@ proc waitUntilReady*(server: Server, timeout: float = 10) =
   ## This is useful when writing tests, where you need to know
   ## the server is ready before you begin sending requests.
   ## If the server is already ready this returns immediately.
-  let start = cpuTime()
+  let start = getMonoTime()
   while true:
     if server.serving.load(moRelaxed):
       return
-    let
-      now = cpuTime()
-      delta = now - start
-    if delta > timeout:
+    let elapsed = getMonoTime() - start
+    if elapsed.inMilliseconds.float > timeout * 1000:
       raise newException(MummyError, "Timeout while waiting for server")
     sleep(100)

@@ -1,8 +1,9 @@
-import mummy, std/[assertions, nativesockets, os, strutils]
+import mummy, std/[assertions, net, strutils]
 
 const
   testPort = Port(18081)
   otherPort = Port(18082)
+  requestTimeout = 5_000
 
 proc handler(request: Request) =
   request.respond(200, body = "Hello from Mummy!")
@@ -11,44 +12,29 @@ block emptyBindings:
   let emptyServer = newServer(handler)
   doAssertRaises MummyError:
     emptyServer.serve([])
+  doAssertRaises MummyError:
+    emptyServer.waitUntilReady(0.1)
   emptyServer.close()
 
 proc fetch(address: string, port: Port, domain: Domain): string =
-  let socket = createNativeSocket(
+  let socket = newSocket(
     domain,
     SockType.SOCK_STREAM,
     Protocol.IPPROTO_TCP,
-    false
+    buffered = false
   )
-  if socket == osInvalidSocket:
-    raiseOSError(osLastError())
 
   try:
-    let ai = getAddrInfo(
-      address,
-      port,
-      domain,
-      SockType.SOCK_STREAM,
-      Protocol.IPPROTO_TCP,
-    )
-    try:
-      if socket.connect(ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
-        raiseOSError(osLastError())
-    finally:
-      freeAddrInfo(ai)
+    socket.connect(address, port, timeout = requestTimeout)
 
     let request = "GET / HTTP/1.0\r\nHost: localhost\r\n\r\n"
-    if socket.send(request.cstring, request.len.cint, 0) < 0:
-      raiseOSError(osLastError())
+    socket.send(request)
 
-    var buffer = newString(4096)
     while true:
-      let bytesReceived = socket.recv(buffer[0].addr, buffer.len.cint, 0)
-      if bytesReceived < 0:
-        raiseOSError(osLastError())
-      if bytesReceived == 0:
+      let chunk = socket.recv(4096, timeout = requestTimeout)
+      if chunk.len == 0:
         break
-      result.add(buffer[0 ..< bytesReceived])
+      result.add(chunk)
   finally:
     socket.close()
 
