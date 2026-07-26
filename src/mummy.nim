@@ -7,7 +7,7 @@ when not compileOption("threads"):
 
 import mummy/common, mummy/internal, std/atomics, std/base64,
     std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
-    std/parseutils, std/random, std/selectors, std/sets, crunchy,
+    std/monotimes, std/parseutils, std/random, std/selectors, std/sets, crunchy,
     std/tables, std/times, webby/httpheaders, webby/queryparams, webby/urls,
     zippy, std/options
 
@@ -25,8 +25,9 @@ when defined(linux):
 
 when defined(windows):
   from std/winlean import TCP_NODELAY
+  const ipv6OnlyOption = 27 # IPV6_V6ONLY from Winsock2.
 elif defined(posix):
-  from std/posix import TCP_NODELAY
+  from std/posix import ECONNABORTED, IPV6_V6ONLY, TCP_NODELAY
 
 import std/locks
 
@@ -93,7 +94,7 @@ type
     workerThreads: seq[Thread[Server]]
     serving: Atomic[bool]
     destroyCalled: bool
-    socket: SocketHandle
+    listeningSockets: seq[SocketHandle]
     selector: Selector[DataEntry]
     responseQueued, sendQueued, shutdown: SelectEvent
     clientSockets: HashSet[SocketHandle]
@@ -1108,6 +1109,52 @@ proc afterSend(
   if dataEntry.outgoingBuffers.len == 0:
     server.selector.updateHandle2(clientSocket, {Read})
 
+proc acceptClient(
+  listeningSocket: SocketHandle
+): (SocketHandle, string) {.raises: [OSError].} =
+  var
+    peerAddress: Sockaddr_storage
+    peerAddressLen = sizeof(peerAddress).SockLen
+
+  let clientSocket =
+    when defined(linux) and not defined(nimdoc):
+      accept4(
+        listeningSocket,
+        cast[ptr SockAddr](addr peerAddress),
+        addr peerAddressLen,
+        SOCK_CLOEXEC or SOCK_NONBLOCK
+      )
+    else:
+      nativesockets.accept(
+        listeningSocket,
+        cast[ptr SockAddr](addr peerAddress),
+        addr peerAddressLen
+      )
+
+  if clientSocket == osInvalidSocket:
+    return (clientSocket, "")
+
+  when not defined(linux):
+    when declared(setInheritable):
+      if not clientSocket.setInheritable(false):
+        let error = osLastError()
+        clientSocket.close()
+        raiseOSError(error)
+
+  let remoteAddress =
+    try:
+      getAddrString(cast[ptr SockAddr](addr peerAddress))
+    except Exception:
+      ""
+
+  (clientSocket, remoteAddress)
+
+proc isTransientAcceptError(error: OSErrorCode): bool =
+  when defined(windows):
+    error.int32 in [WSAEWOULDBLOCK, WSAECONNRESET, WSAECONNABORTED]
+  else:
+    error.int32 in [EAGAIN, EWOULDBLOCK, EINTR, ECONNABORTED]
+
 proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
   withLock server.taskQueueLock:
     server.destroyCalled = true
@@ -1116,8 +1163,8 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       server.selector.close()
     except Exception as e:
       discard # Ignore
-  if server.socket.int != 0:
-    server.socket.close()
+  for listeningSocket in server.listeningSockets:
+    listeningSocket.close()
   for clientSocket in server.clientSockets:
     clientSocket.close()
   broadcast(server.taskQueueCond)
@@ -1271,54 +1318,39 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
       # echo "Socket ready: ", readyKey.fd, " ", readyKey.events
 
-      if readyKey.fd == server.socket.int:
+      let readyDataEntry = server.selector.getData(readyKey.fd)
+      if readyDataEntry.kind == ServerSocketEntry:
         # We should have a new client socket to accept
         if Read in readyKey.events:
+          let listeningSocket = readyKey.fd.SocketHandle
           let (clientSocket, remoteAddress) =
-            when defined(linux) and not defined(nimdoc):
-              var
-                sockAddr: SockAddr
-                addrLen = sizeof(sockAddr).SockLen
-              let
-                socket =
-                  accept4(
-                    server.socket,
-                    sockAddr.addr,
-                    addrLen.addr,
-                    SOCK_CLOEXEC or SOCK_NONBLOCK
-                  )
-                sockAddrStr =
-                  try:
-                    getAddrString(sockAddr.addr)
-                  except Exception as e:
-                    ""
-              (socket, sockAddrStr)
-            else:
-              server.socket.accept()
+            acceptClient(listeningSocket)
 
           if clientSocket == osInvalidSocket:
-            continue
+            let error = osLastError()
+            if not isTransientAcceptError(error):
+              raiseOSError(error)
+          else:
+            when not defined(linux):
+              # Not needed on linux where we use SOCK_NONBLOCK.
+              clientSocket.setBlocking(false)
 
-          when not defined(linux):
-            # Not needed on linux where we can use SOCK_NONBLOCK
-            clientSocket.setBlocking(false)
+            if server.tcpNoDelay:
+              server.setNoDelay(clientSocket)
 
-          if server.tcpNoDelay:
-            server.setNoDelay(clientSocket)
+            server.clientSockets.incl(clientSocket)
 
-          server.clientSockets.incl(clientSocket)
-
-          let dataEntry = DataEntry(kind: ClientSocketEntry)
-          dataEntry.clientId = server.rand.next()
-          dataEntry.remoteAddress = remoteAddress
-          dataEntry.recvBuf.setLen(initialRecvBufLen)
-          server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
-      else: # Client socket
+            let dataEntry = DataEntry(kind: ClientSocketEntry)
+            dataEntry.clientId = server.rand.next()
+            dataEntry.remoteAddress = remoteAddress
+            dataEntry.recvBuf.setLen(initialRecvBufLen)
+            server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
+      elif readyDataEntry.kind == ClientSocketEntry:
         if Error in readyKey.events:
           needClosing.incl(readyKey.fd.SocketHandle)
           continue
 
-        let dataEntry = server.selector.getData(readyKey.fd)
+        let dataEntry = readyDataEntry
 
         if Read in readyKey.events:
           # Expand the buffer if it is full
@@ -1406,56 +1438,87 @@ proc close*(server: Server) {.raises: [], gcsafe.} =
   ## Cleanly stops and deallocates the server.
   ## In-flight request handler calls will be allowed to finish.
   ## No additional handler calls will be dispatched even if they are queued.
-  if server.socket.int != 0:
+  if server.listeningSockets.len > 0:
     server.trigger(server.shutdown)
   else:
     server.destroy(true)
 
-proc serve*(
-  server: Server,
+proc createListeningSocket(
+  address: string,
   port: Port,
-  address = "localhost"
-) {.raises: [MummyError].} =
-  ## The server will serve on the address and port. The default address is
-  ## localhost. Use "0.0.0.0" to make the server externally accessible (with
-  ## caution).
-  ## This call does not return unless server.close() is called from another
-  ## thread.
+  domain: Domain,
+  ipv6Only: bool
+): SocketHandle =
+  let aiList = getAddrInfo(
+    address,
+    port,
+    domain,
+    SockType.SOCK_STREAM,
+    Protocol.IPPROTO_TCP,
+  )
+  try:
+    var
+      ai = aiList
+      lastError = default(OSErrorCode)
+    while ai != nil:
+      let listeningSocket = createNativeSocket(
+        ai.ai_family,
+        ai.ai_socktype,
+        ai.ai_protocol,
+        false
+      )
+      if listeningSocket == osInvalidSocket:
+        raiseOSError(osLastError())
 
-  if server.socket.int != 0:
+      try:
+        listeningSocket.setBlocking(false)
+        listeningSocket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
+        if ipv6Only and ai.ai_family == nativesockets.toInt(Domain.AF_INET6):
+          listeningSocket.setSockOptInt(
+            nativesockets.toInt(Protocol.IPPROTO_IPV6).int,
+            when defined(windows): ipv6OnlyOption else: IPV6_V6ONLY.int,
+            1
+          )
+
+        if bindAddr(listeningSocket, ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
+          raiseOSError(osLastError())
+        if nativesockets.listen(listeningSocket, listenBacklogLen) < 0:
+          raiseOSError(osLastError())
+        return listeningSocket
+      except OSError as e:
+        lastError = e.errorCode.OSErrorCode
+        listeningSocket.close()
+
+      ai = ai.ai_next
+
+    if lastError != default(OSErrorCode):
+      raiseOSError(lastError)
+    raise newException(IOError, "Could not resolve address: " & address)
+  finally:
+    freeAddrInfo(aiList)
+
+proc serveBindings(
+  server: Server,
+  bindings: openArray[(string, Port)],
+  domain: Domain,
+  ipv6Only: bool
+) {.raises: [MummyError].} =
+  if server.listeningSockets.len > 0:
     raise newException(MummyError, "Server already has a socket")
+  if bindings.len == 0:
+    raise newException(MummyError, "At least one address and port is required")
 
   try:
-    server.socket = createNativeSocket(
-      Domain.AF_INET,
-      SockType.SOCK_STREAM,
-      Protocol.IPPROTO_TCP,
-      false
-    )
-    if server.socket == osInvalidSocket:
-      raiseOSError(osLastError())
-
-    server.socket.setBlocking(false)
-    server.socket.setSockOptInt(SOL_SOCKET, SO_REUSEADDR, 1)
-
-    let ai = getAddrInfo(
-      address,
-      port,
-      Domain.AF_INET,
-      SockType.SOCK_STREAM,
-      Protocol.IPPROTO_TCP,
-    )
-    try:
-      if bindAddr(server.socket, ai.ai_addr, ai.ai_addrlen.SockLen) < 0:
-        raiseOSError(osLastError())
-    finally:
-      freeAddrInfo(ai)
-
-    if nativesockets.listen(server.socket, listenBacklogLen) < 0:
-      raiseOSError(osLastError())
-
-    let dataEntry = DataEntry(kind: ServerSocketEntry)
-    server.selector.registerHandle2(server.socket, {Read}, dataEntry)
+    for (address, port) in bindings:
+      let listeningSocket = createListeningSocket(
+        address,
+        port,
+        domain,
+        ipv6Only
+      )
+      server.listeningSockets.add(listeningSocket)
+      let dataEntry = DataEntry(kind: ServerSocketEntry)
+      server.selector.registerHandle2(listeningSocket, {Read}, dataEntry)
   except Exception as e:
     server.destroy(true)
     raise currentExceptionAsMummyError()
@@ -1468,6 +1531,28 @@ proc serve*(
     server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
     server.destroy(false)
     raise currentExceptionAsMummyError()
+
+proc serve*(
+  server: Server,
+  port: Port,
+  address = "localhost"
+) {.raises: [MummyError].} =
+  ## The server will serve on the address and port. The default address is
+  ## localhost. Use "0.0.0.0" to make the server externally accessible (with
+  ## caution).
+  ## This call does not return unless server.close() is called from another
+  ## thread.
+  server.serveBindings([(address, port)], Domain.AF_INET, false)
+
+proc serve*(
+  server: Server,
+  bindings: openArray[(string, Port)]
+) {.raises: [MummyError].} =
+  ## The server will serve on every `(address, port)` binding. IPv4 and IPv6
+  ## addresses and different ports can be used together.
+  ## This call does not return unless server.close() is called from another
+  ## thread.
+  server.serveBindings(bindings, Domain.AF_UNSPEC, true)
 
 proc newServer*(
   handler: RequestHandler,
@@ -1549,13 +1634,11 @@ proc waitUntilReady*(server: Server, timeout: float = 10) =
   ## This is useful when writing tests, where you need to know
   ## the server is ready before you begin sending requests.
   ## If the server is already ready this returns immediately.
-  let start = cpuTime()
+  let start = getMonoTime()
   while true:
     if server.serving.load(moRelaxed):
       return
-    let
-      now = cpuTime()
-      delta = now - start
-    if delta > timeout:
+    let elapsed = getMonoTime() - start
+    if elapsed.inMilliseconds.float > timeout * 1000:
       raise newException(MummyError, "Timeout while waiting for server")
     sleep(100)

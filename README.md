@@ -96,6 +96,17 @@ server.serve(Port(8080))
 
 `nim c --threads:on --mm:orc -r examples/basic_router.nim`
 
+To listen on multiple IPv4 or IPv6 addresses, pass an array of
+`(address, port)` tuples:
+
+```nim
+server.serve([
+  ("0.0.0.0", Port(8080)),
+  ("::", Port(8080)),
+  ("127.0.0.1", Port(9090))
+])
+```
+
 ## Example WebSocket server
 
 ```nim
