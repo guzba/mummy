@@ -1,13 +1,20 @@
-# ignore files with no extention:
 *
 !*/
 !*.*
-
-# normal ignores:
+nim.cfg
+/vendor
 *.exe
-nimcache
 *.pdb
 *.ilk
-.*
 *.out
 *.sqlite3
+*.out
+/nimcache
+.tool-versions
+*.dSYM/
+nimble.develop
+nimble.paths
+.nimcache
+/deps/
+.nimcache
+nimbledeps
