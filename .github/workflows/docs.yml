@@ -4,6 +4,7 @@ on:
   push:
     branches:
     - master
+  pull_request:
 
 permissions:
   contents: write
@@ -60,6 +61,7 @@ jobs:
       run: nim buildIndex -o:${{ env.DEPLOY_DIR }}/index.html ${{ env.DEPLOY_DIR }}
 
     - name: Deploy documentation
+      if: github.event_name == 'push'
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
