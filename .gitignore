@@ -3,6 +3,8 @@
 !*.*
 nim.cfg
 /vendor
+/deps
+nim.cfg
 *.exe
 *.pdb
 *.ilk

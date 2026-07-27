@@ -2,11 +2,14 @@ name: Github Actions
 on: [push, pull_request]
 jobs:
   build:
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        nim-version: ['2.2.6', 'stable']
+        nim-version: ['2.2.10', 'stable']
 
     runs-on: ${{ matrix.os }}
 
@@ -16,9 +19,24 @@ jobs:
       with:
         nim-version: ${{ matrix.nim-version }}
         repo-token: ${{ secrets.GITHUB_TOKEN }}
-    - run: nimble install -y
-    - run: nimble install -y whisky
-    - run: nimble install -y jsony
+
+    - name: Install Atlas
+      run: curl -fsSL https://raw.githubusercontent.com/nim-lang/atlas/HEAD/install.sh | bash -
+
+    - name: Versions
+      run: |
+        nim -v
+        atlas -v
+
+    - name: Cache packages
+      uses: actions/cache@v4
+      with:
+        path: deps/
+        key: ${{ runner.os }}-nim-${{ matrix.nim-version }}-atlas-${{ hashFiles('mummy.nimble') }}
+
+    - name: Install dependencies
+      run: atlas install -t:8 --features:testing
+
     - run: nim c -r -d:useMalloc tests/test.nim
     - run: nim c -r -d:useMalloc tests/test_http.nim
     - run: nim c --mm:atomicArc -r -d:useMalloc tests/test_http.nim

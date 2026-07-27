@@ -5,11 +5,14 @@ when not defined(nimdoc):
 when not compileOption("threads"):
   {.error: "Using --threads:on is required by Mummy.".}
 
-import mummy/common, mummy/internal, std/atomics, std/base64,
-    std/cpuinfo, std/deques, std/hashes, std/nativesockets, std/os,
-    std/monotimes, std/parseutils, std/random, std/selectors, std/sets, crunchy,
-    std/tables, std/times, webby/httpheaders, webby/queryparams, webby/urls,
-    zippy, std/options
+import std/[atomics, base64, cpuinfo, times, monotimes, parseutils]
+import std/[options, sets, deques, hashes, tables]
+import std/[nativesockets, os, selectors, random]
+
+import webby/[httpheaders, queryparams, urls]
+import crunchy, zippy
+
+import ./mummy/common, ./mummy/internal
 
 from std/strutils import find, cmpIgnoreCase, toLowerAscii
 
@@ -97,6 +100,7 @@ type
     listeningSockets: seq[SocketHandle]
     selector: Selector[DataEntry]
     responseQueued, sendQueued, shutdown: SelectEvent
+    responseQueuedInitialized, sendQueuedInitialized, shutdownInitialized: bool
     clientSockets: HashSet[SocketHandle]
     taskQueueLock: Lock
     taskQueueCond: Cond
@@ -1175,18 +1179,21 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     deinitLock(server.responseQueueLock)
     deinitLock(server.sendQueueLock)
     deinitLock(server.websocketQueuesLock)
-    try:
-      server.responseQueued.close()
-    except Exception as e:
-      discard # Ignore
-    try:
-      server.sendQueued.close()
-    except Exception as e:
-      discard # Ignore
-    try:
-      server.shutdown.close()
-    except Exception as e:
-      discard # Ignore
+    if server.responseQueuedInitialized:
+      try:
+        server.responseQueued.close()
+      except Exception as e:
+        discard # Ignore
+    if server.sendQueuedInitialized:
+      try:
+        server.sendQueued.close()
+      except Exception as e:
+        discard # Ignore
+    if server.shutdownInitialized:
+      try:
+        server.shutdown.close()
+      except Exception as e:
+        discard # Ignore
     `=destroy`(server[])
     deallocShared(server)
   else:
@@ -1590,31 +1597,37 @@ proc newServer*(
 
   result.workerThreads.setLen(workerThreads)
 
+  initLock(result.taskQueueLock)
+  initCond(result.taskQueueCond)
+  initLock(result.responseQueueLock)
+  initLock(result.sendQueueLock)
+  initLock(result.websocketQueuesLock)
+
   # Stuff that can fail
   try:
-    result.responseQueued = newSelectEvent()
-    result.sendQueued = newSelectEvent()
-    result.shutdown = newSelectEvent()
+    when not defined(mummyNoWorkers):
+      # Parser fuzzing does not run the selector loop; avoid allocating
+      # thousands of unused Windows loopback socket pairs for SelectEvents.
+      result.responseQueued = newSelectEvent()
+      result.responseQueuedInitialized = true
+      result.sendQueued = newSelectEvent()
+      result.sendQueuedInitialized = true
+      result.shutdown = newSelectEvent()
+      result.shutdownInitialized = true
 
-    result.selector = newSelector[DataEntry]()
+      result.selector = newSelector[DataEntry]()
 
-    let responseQueuedData = DataEntry(kind: EventEntry)
-    responseQueuedData.event = result.responseQueued
-    result.selector.registerEvent(result.responseQueued, responseQueuedData)
+      let responseQueuedData = DataEntry(kind: EventEntry)
+      responseQueuedData.event = result.responseQueued
+      result.selector.registerEvent(result.responseQueued, responseQueuedData)
 
-    let sendQueuedData = DataEntry(kind: EventEntry)
-    sendQueuedData.event = result.sendQueued
-    result.selector.registerEvent(result.sendQueued, sendQueuedData)
+      let sendQueuedData = DataEntry(kind: EventEntry)
+      sendQueuedData.event = result.sendQueued
+      result.selector.registerEvent(result.sendQueued, sendQueuedData)
 
-    let shutdownData = DataEntry(kind: EventEntry)
-    shutdownData.event = result.shutdown
-    result.selector.registerEvent(result.shutdown, shutdownData)
-
-    initLock(result.taskQueueLock)
-    initCond(result.taskQueueCond)
-    initLock(result.responseQueueLock)
-    initLock(result.sendQueueLock)
-    initLock(result.websocketQueuesLock)
+      let shutdownData = DataEntry(kind: EventEntry)
+      shutdownData.event = result.shutdown
+      result.selector.registerEvent(result.shutdown, shutdownData)
 
     for i in 0 ..< workerThreads:
       createThread(result.workerThreads[i], workerProc, result)
