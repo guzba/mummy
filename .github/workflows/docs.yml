@@ -1,29 +1,66 @@
-# Disabled on 4/27/26 due to https://github.com/guzba/mummy/actions/runs/25017060576/job/73268049322
-
 name: docs
+
 on:
   push:
     branches:
-      - master
+    - master
+
+permissions:
+  contents: write
+
 env:
-  nim-version: 'stable'
-  nim-src: src/${{ github.event.repository.name }}.nim
-  deploy-dir: .gh-pages
+  NIM_VERSION: '2.2.10'
+  NIM_SRC: src/mummy.nim
+  DEPLOY_DIR: .gh-pages
+
 jobs:
   docs:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+
     steps:
     - uses: actions/checkout@v4
+
     - uses: jiro4989/setup-nim-action@v2
       with:
-        nim-version: ${{ matrix.nim-version }}
+        nim-version: ${{ env.NIM_VERSION }}
         repo-token: ${{ secrets.GITHUB_TOKEN }}
-    - run: nimble install -Y
-    - run: nimble doc --index:on --git.url:https://github.com/${{ github.repository }} --git.commit:master  --out:${{ env.deploy-dir }}/ src/mummy/routers.nim
-    - run: nimble doc --index:on --project --git.url:https://github.com/${{ github.repository }} --git.commit:master  --out:${{ env.deploy-dir }} ${{ env.nim-src }}
-    - run: nim buildIndex -o:${{ env.deploy-dir }}/index.html ${{ env.deploy-dir }}
-    - name: Deploy documents
+
+    - name: Install Atlas
+      run: curl -fsSL https://raw.githubusercontent.com/nim-lang/atlas/HEAD/install.sh | bash -
+
+    - name: Cache packages
+      uses: actions/cache@v4
+      with:
+        path: deps/
+        key: docs-${{ runner.os }}-nim-${{ env.NIM_VERSION }}-atlas-${{ hashFiles('mummy.nimble') }}
+
+    - name: Install dependencies
+      run: atlas install -t:8
+
+    - name: Generate router documentation
+      run: >-
+        nim doc --index:on
+        --git.url:https://github.com/${{ github.repository }}
+        --git.commit:master
+        --out:${{ env.DEPLOY_DIR }}/
+        src/mummy/routers.nim
+
+    - name: Generate project documentation
+      run: >-
+        nim doc --index:on --project
+        --git.url:https://github.com/${{ github.repository }}
+        --git.commit:master
+        --out:${{ env.DEPLOY_DIR }}
+        ${{ env.NIM_SRC }}
+
+    - name: Build documentation index
+      run: nim buildIndex -o:${{ env.DEPLOY_DIR }}/index.html ${{ env.DEPLOY_DIR }}
+
+    - name: Deploy documentation
       uses: peaceiris/actions-gh-pages@v3
       with:
         github_token: ${{ secrets.GITHUB_TOKEN }}
-        publish_dir: ${{ env.deploy-dir }}
+        publish_dir: ${{ env.DEPLOY_DIR }}

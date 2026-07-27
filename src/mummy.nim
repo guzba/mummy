@@ -1154,7 +1154,9 @@ proc acceptClient(
   (clientSocket, remoteAddress)
 
 proc isTransientAcceptError(error: OSErrorCode): bool =
-  when defined(windows):
+  when defined(nimdoc):
+    false
+  elif defined(windows):
     error.int32 in [WSAEWOULDBLOCK, WSAECONNRESET, WSAECONNABORTED]
   else:
     error.int32 in [EAGAIN, EWOULDBLOCK, EINTR, ECONNABORTED]
