@@ -10,7 +10,7 @@
 ## Project Structure
 
 - `src/mummy.nim`: HTTP/WebSocket server core, selector loop, worker dispatch, and public server API.
-- `src/mummy/`: Supporting public modules such as routers, multipart handling, and file loggers, plus shared internals.
+- `src/mummy/`: Supporting public modules such as routers and multipart handling, plus shared internals.
 - `tests/`: Standalone unit, integration, protocol, multi-bind, WebSocket, and fuzz-style test programs.
 - `examples/`: User-facing examples; update them when public behavior changes.
 - `mummy.nimble`: Package metadata, runtime requirements, and optional dependency features.
