@@ -28,7 +28,7 @@ Mummy has been written specifically to maximize the performance of your server h
 * Built-in first-class WebSocket support.
 * Multiplexed socket IO without the `{.async.}` price.
 
-Mummy requires `--threads:on` and `--mm:orc` or `--mm:arc`.
+Mummy requires Nim 2.0 or newer, `--threads:on`, and `--mm:orc` or `--mm:arc`.
 
 The Mummy name refers to [historical Egypt stuff](docs/mummy.jpg).
 
@@ -118,6 +118,27 @@ server.serve([
   ("127.0.0.1", Port(9090))
 ])
 ```
+
+## Logging
+
+Mummy emits structured log events through
+[Chroniclers](https://github.com/elcritch/chroniclers). Logging compiles away by
+default, and applications select the backend for the whole build:
+
+```sh
+nim c -d:chroniclers.logBackend=std app.nim
+nim c -d:chroniclers.logBackend=none app.nim
+```
+
+To use Chronicles, require the Mummy feature in your package:
+
+```nim
+requires "mummy[chronicles]"
+```
+
+Local and CI test installs made with `atlas install --features:testing` include
+Chronicles and select it by default. An explicit Chroniclers backend define
+still takes precedence.
 
 ## Example WebSocket server
 

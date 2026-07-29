@@ -10,7 +10,7 @@ import std/[options, sets, deques, hashes, tables]
 import std/[nativesockets, os, selectors, random]
 
 import webby/[httpheaders, queryparams, urls]
-import crunchy, zippy
+import chroniclers, crunchy, zippy
 
 import ./mummy/common, ./mummy/internal
 
@@ -35,6 +35,12 @@ elif defined(posix):
 import std/locks
 
 export Port, common, httpheaders, queryparams
+
+template logSafely(body: untyped) =
+  try:
+    body
+  except Exception:
+    discard
 
 const
   whitespace = {' ', '\t'}
@@ -90,7 +96,6 @@ type
   ServerObj = object
     handler: RequestHandler
     websocketHandler: WebSocketHandler
-    logHandler: LogHandler
     maxHeadersLen, maxBodyLen, maxMessageLen: int
     tcpNoDelay: bool
     rand: Rand
@@ -183,14 +188,6 @@ proc `$`*(request: Request): string {.gcsafe.} =
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $cast[uint](hash(websocket))
 
-proc log(server: Server, level: LogLevel, args: varargs[string]) =
-  if server.logHandler == nil:
-    return
-  try:
-    server.logHandler(level, args)
-  except Exception as e:
-    discard # ???
-
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   # If a header looks like `Accept-Encoding: gzip,deflate` then we may want to
   # check if the value contains a specific token (in this case gzip or deflate)
@@ -239,30 +236,23 @@ proc updateHandle2(
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
 
-proc trigger(
-  server: Server,
-  event: SelectEvent
-) {.raises: [].} =
+proc triggerEvent(event: SelectEvent) {.raises: [].} =
   try:
     event.trigger()
   except Exception as e:
     let err = osLastError()
-    server.log(
-      ErrorLevel,
-      "Error triggering event ", $err, " ", osErrorMsg(err)
-    )
+    logSafely:
+      error "Error triggering event",
+        osError = err,
+        osErrorMessage = osErrorMsg(err),
+        exception = e.msg
 
-proc setNoDelay(
-  server: Server,
-  socket: SocketHandle
-) {.raises: [].} =
+proc setNoDelay(socket: SocketHandle) {.raises: [].} =
   try:
     socket.setSockOptInt(Protocol.IPPROTO_TCP.int, TCP_NODELAY.int, 1)
   except Exception as e:
-    server.log(
-      ErrorLevel,
-      "Error setting TCP_NODELAY: ", e.msg
-    )
+    logSafely:
+      error "Error setting TCP_NODELAY", exception = e.msg
 
 proc send*(
   websocket: WebSocket,
@@ -293,7 +283,7 @@ proc send*(
     websocket.server.sendQueue.addLast(move encodedFrame)
 
   if queueWasEmpty:
-    websocket.server.trigger(websocket.server.sendQueued)
+    triggerEvent(websocket.server.sendQueued)
 
 proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
   ## Begins the WebSocket closing handshake.
@@ -313,7 +303,7 @@ proc close*(websocket: WebSocket) {.raises: [], gcsafe.} =
     websocket.server.sendQueue.addLast(move encodedFrame)
 
   if queueWasEmpty:
-    websocket.server.trigger(websocket.server.sendQueued)
+    triggerEvent(websocket.server.sendQueued)
 
 proc respond*(
   request: Request,
@@ -325,10 +315,9 @@ proc respond*(
   ## This should usually only be called once per request.
 
   if request.responded:
-    request.server.log(
-      InfoLevel,
-      "Responding to a request that has already received a non-1xx response"
-    )
+    logSafely:
+      info "Responding to a request that has already received a non-1xx response",
+        request = $request
 
   var encodedResponse = OutgoingBuffer()
   encodedResponse.clientSocket = request.clientSocket
@@ -363,20 +352,16 @@ proc respond*(
       except Exception as e:
         # This should never happen since exceptions are only thrown if
         # the data format is invalid or the level is invalid
-        request.server.log(
-          DebugLevel,
-          "Unexpected gzip error: " & e.msg
-        )
+        logSafely:
+          debug "Unexpected gzip error", exception = e.msg
     elif request.headers.headerContainsToken("Accept-Encoding", "deflate"):
       try:
         body = compress(body.cstring, body.len, BestSpeed, dfDeflate)
         headers["Content-Encoding"] = "deflate"
       except Exception as e:
         # See gzip
-        request.server.log(
-          DebugLevel,
-          "Unexpected deflate error: " & e.msg
-        )
+        logSafely:
+          debug "Unexpected deflate error", exception = e.msg
     else:
       discard
 
@@ -412,7 +397,7 @@ proc respond*(
     request.server.responseQueue.addLast(move encodedResponse)
 
   if queueWasEmpty:
-    request.server.trigger(request.server.responseQueued)
+    triggerEvent(request.server.responseQueued)
 
 proc upgradeToWebSocket*(
   request: Request
@@ -475,10 +460,11 @@ proc workerProc(server: Server) {.raises: [].} =
       try:
         server.handler(task.request)
       except Exception as e:
-        server.log(
-          ErrorLevel,
-          "Handler exception: " & e.msg & " " & e.getStackTrace()
-        )
+        logSafely:
+          error "Handler exception",
+            request = $task.request,
+            exception = e.msg,
+            stackTrace = e.getStackTrace()
         if not task.request.responded:
           task.request.respond(500)
       `=destroy`(task.request[])
@@ -516,10 +502,11 @@ proc workerProc(server: Server) {.raises: [].} =
             move update.get.message
           )
         except Exception as e:
-          server.log(
-            ErrorLevel,
-            "WebSocket exception: " & e.msg & " " & e.getStackTrace()
-          )
+          logSafely:
+            error "WebSocket exception",
+              websocket = $task.websocket,
+              exception = e.msg,
+              stackTrace = e.getStackTrace()
 
         if update.get.event == CloseEvent:
           break
@@ -545,7 +532,8 @@ proc workerProc(server: Server) {.raises: [].} =
     when defined(mummyCheck22398):
       # https://github.com/nim-lang/Nim/issues/22398
       if not loggedExceptionLeak and getCurrentExceptionMsg() != "":
-        echo "Detected leaked exception: ", getCurrentExceptionMsg()
+        logSafely:
+          error "Detected leaked exception", exception = getCurrentExceptionMsg()
         loggedExceptionLeak = true
 
 proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
@@ -558,7 +546,10 @@ proc postWebSocketUpdate(
   update: sink WebSocketUpdate
 ) {.raises: [].} =
   if websocket.server.websocketHandler == nil:
-    websocket.server.log(DebugLevel, "WebSocket event but no WebSocket handler")
+    logSafely:
+      debug "WebSocket event but no WebSocket handler",
+        websocket = $websocket,
+        event = update.event
     return
 
   var needsTask: bool
@@ -661,7 +652,11 @@ proc afterRecvWebSocket(
       return true # Close the connection
 
     if dataEntry.frameState.frameLen + payloadLen > server.maxMessageLen:
-      server.log(DebugLevel, "Dropped WebSocket, message too long")
+      logSafely:
+        debug "Dropped WebSocket message",
+          reason = "message too long",
+          messageLen = dataEntry.frameState.frameLen + payloadLen,
+          maxMessageLen = server.maxMessageLen
       return true # Message is too large, close the connection
 
     if dataEntry.bytesReceived < pos + 4:
@@ -741,7 +736,10 @@ proc afterRecvWebSocket(
       of 0xA: # Pong
         message.kind = Pong
       else:
-        server.log(DebugLevel, "Dropped WebSocket, received invalid opcode")
+        logSafely:
+          debug "Dropped WebSocket message",
+            reason = "invalid opcode",
+            opcode = frameOpcode
         return true # Invalid opcode, close the connection
 
       let
@@ -778,7 +776,10 @@ proc popRequest(
   dataEntry.requestState = IncomingRequestState()
   inc dataEntry.requestCounter
   if dataEntry.bytesReceived > 0:
-    server.log(DebugLevel, "Receive buffer not empty after request")
+    logSafely:
+      debug "Receive buffer not empty after request",
+        clientSocket = cast[uint](clientSocket),
+        bytesReceived = dataEntry.bytesReceived
 
 proc afterRecvHttp(
   server: Server,
@@ -789,10 +790,10 @@ proc afterRecvHttp(
   # while a request is outstanding
   if dataEntry.requestCounter > 0 and
     not dataEntry.requestState.loggedUnexpectedData:
-    server.log(
-      DebugLevel,
-      "Received data before the previous request has been responded to"
-    )
+    logSafely:
+      debug "Received data before the previous request has been responded to",
+        clientSocket = cast[uint](clientSocket),
+        requestCounter = dataEntry.requestCounter
     dataEntry.requestState.loggedUnexpectedData = true
 
   # Have we completed parsing the headers?
@@ -805,7 +806,12 @@ proc afterRecvHttp(
     )
     if headersEnd < 0: # Headers end not found
       if dataEntry.bytesReceived > server.maxHeadersLen:
-        server.log(DebugLevel, "Dropped connection, headers too long")
+        logSafely:
+          debug "Dropped connection",
+            reason = "headers too long",
+            clientSocket = cast[uint](clientSocket),
+            headersLen = dataEntry.bytesReceived,
+            maxHeadersLen = server.maxHeadersLen
         return true # Headers too long or malformed, close the connection
       return false # Try again after receiving more bytes
 
@@ -853,11 +859,12 @@ proc afterRecvHttp(
           dataEntry.requestState.path = move url.path
           dataEntry.requestState.queryParams = move url.query
         except Exception as e:
-          server.log(
-            DebugLevel,
-            "Dropped connection, invalid request URI: " &
-            dataEntry.requestState.uri
-          )
+          logSafely:
+            debug "Dropped connection",
+              reason = "invalid request URI",
+              clientSocket = cast[uint](clientSocket),
+              uri = dataEntry.requestState.uri,
+              exception = e.msg
           return true # Invalid request URI, close the connection
         if dataEntry.recvBuf.find(
           ' ',
@@ -1007,7 +1014,12 @@ proc afterRecvHttp(
         return true # Parsing chunk length failed, close the connection
 
       if dataEntry.requestState.contentLength + chunkLen > server.maxBodyLen:
-        server.log(DebugLevel, "Dropped connection, body too long")
+        logSafely:
+          debug "Dropped connection",
+            reason = "body too long",
+            clientSocket = cast[uint](clientSocket),
+            bodyLen = dataEntry.requestState.contentLength + chunkLen,
+            maxBodyLen = server.maxBodyLen
         return true # Body is too large, close the connection
 
       let chunkStart = chunkLenEnd + 2
@@ -1044,7 +1056,12 @@ proc afterRecvHttp(
         server.postTask(WorkerTask(request: request))
   else:
     if dataEntry.requestState.contentLength > server.maxBodyLen:
-      server.log(DebugLevel, "Dropped connection, body too long")
+      logSafely:
+        debug "Dropped connection",
+          reason = "body too long",
+          clientSocket = cast[uint](clientSocket),
+          bodyLen = dataEntry.requestState.contentLength,
+          maxBodyLen = server.maxBodyLen
       return true # Body is too large, close the connection
 
     if dataEntry.bytesReceived < dataEntry.requestState.contentLength:
@@ -1271,7 +1288,10 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
               if clientDataEntry.sendsWaitingForUpgrade.len > 0:
                 for encodedFrame in clientDataEntry.sendsWaitingForUpgrade:
                   if clientDataEntry.closeFrameQueuedAt > 0:
-                    server.log(DebugLevel, "Dropped message after WebSocket close")
+                    logSafely:
+                      debug "Dropped WebSocket message",
+                        reason = "connection closing",
+                        clientSocket = cast[uint](encodedFrame.clientSocket)
                   else:
                     clientDataEntry.outgoingBuffers.addLast(encodedFrame)
                     if encodedFrame.isCloseFrame:
@@ -1279,9 +1299,15 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 clientDataEntry.sendsWaitingForUpgrade.setLen(0)
           else:
             # Was this file descriptor reused for a different client?
-            server.log(DebugLevel, "Dropped response to disconnected client")
+            logSafely:
+              debug "Dropped response",
+                reason = "client disconnected",
+                clientSocket = cast[uint](encodedResponse.clientSocket)
         else:
-          server.log(DebugLevel, "Dropped response to disconnected client")
+          logSafely:
+            debug "Dropped response",
+              reason = "client disconnected",
+              clientSocket = cast[uint](encodedResponse.clientSocket)
 
     if sendQueuedTriggered:
       # If we have any sends queued move them to the outgoing buffer queue of
@@ -1299,7 +1325,10 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             # Have we sent the upgrade response yet?
             if clientDataEntry.upgradedToWebSocket:
               if clientDataEntry.closeFrameQueuedAt > 0:
-                server.log(DebugLevel, "Dropped message after WebSocket close")
+                logSafely:
+                  debug "Dropped WebSocket message",
+                    reason = "connection closing",
+                    clientSocket = cast[uint](encodedFrame.clientSocket)
               else:
                 clientDataEntry.outgoingBuffers.addLast(encodedFrame)
                 if encodedFrame.isCloseFrame:
@@ -1313,9 +1342,15 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
               clientDataEntry.sendsWaitingForUpgrade.add(encodedFrame)
           else:
             # Was this file descriptor reused for a different client?
-            server.log(DebugLevel, "Dropped message to disconnected client")
+            logSafely:
+              debug "Dropped WebSocket message",
+                reason = "client disconnected",
+                clientSocket = cast[uint](encodedFrame.clientSocket)
         else:
-          server.log(DebugLevel, "Dropped message to disconnected client")
+          logSafely:
+            debug "Dropped WebSocket message",
+              reason = "client disconnected",
+              clientSocket = cast[uint](encodedFrame.clientSocket)
 
     if shutdownTriggered:
       server.destroy(true)
@@ -1345,7 +1380,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
               clientSocket.setBlocking(false)
 
             if server.tcpNoDelay:
-              server.setNoDelay(clientSocket)
+              setNoDelay(clientSocket)
 
             server.clientSockets.incl(clientSocket)
 
@@ -1355,7 +1390,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             dataEntry.recvBuf.setLen(initialRecvBufLen)
             server.selector.registerHandle2(clientSocket, {Read}, dataEntry)
       elif readyDataEntry.kind == ClientSocketEntry:
-        if Error in readyKey.events:
+        if Event.Error in readyKey.events:
           needClosing.incl(readyKey.fd.SocketHandle)
           continue
 
@@ -1427,7 +1462,10 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
         server.selector.unregister(clientSocket)
       except Exception as e:
         # Leaks DataEntry for this socket
-        server.log(DebugLevel, "Error unregistering client socket")
+        logSafely:
+          debug "Error unregistering client socket",
+            clientSocket = cast[uint](clientSocket),
+            exception = e.msg
       finally:
         clientSocket.close()
         server.clientSockets.excl(clientSocket)
@@ -1448,7 +1486,7 @@ proc close*(server: Server) {.raises: [], gcsafe.} =
   ## In-flight request handler calls will be allowed to finish.
   ## No additional handler calls will be dispatched even if they are queued.
   if server.listeningSockets.len > 0:
-    server.trigger(server.shutdown)
+    triggerEvent(server.shutdown)
   else:
     server.destroy(true)
 
@@ -1537,7 +1575,10 @@ proc serveBindings(
   try:
     server.loopForever()
   except Exception as e:
-    server.log(ErrorLevel, e.msg & "\n" & e.getStackTrace())
+    logSafely:
+      error "Server loop exception",
+        exception = e.msg,
+        stackTrace = e.getStackTrace()
     server.destroy(false)
     raise currentExceptionAsMummyError()
 
@@ -1566,7 +1607,6 @@ proc serve*(
 proc newServer*(
   handler: RequestHandler,
   websocketHandler: WebSocketHandler = nil,
-  logHandler: LogHandler = nil,
   workerThreads = max(countProcessors() * 10, 1),
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024, # 1 MB
@@ -1575,7 +1615,7 @@ proc newServer*(
 ): Server {.raises: [MummyError].} =
   ## Creates a new HTTP server. The request handler will be called for incoming
   ## HTTP requests. The WebSocket handler will be called for WebSocket events.
-  ## Calls to the HTTP, WebSocket and log handlers are made from worker threads.
+  ## Calls to the HTTP and WebSocket handlers are made from worker threads.
   ## WebSocket events are dispatched serially per connection. This means your
   ## WebSocket handler must return from a call before the next call will be
   ## dispatched for the same connection.
@@ -1590,7 +1630,6 @@ proc newServer*(
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
-  result.logHandler = if logHandler != nil: logHandler else: echoLogger
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
