@@ -5,7 +5,7 @@ when not defined(nimdoc):
 when not compileOption("threads"):
   {.error: "Using --threads:on is required by Mummy.".}
 
-import std/[atomics, base64, cpuinfo, times, monotimes, parseutils]
+import std/[atomics, base64, cpuinfo, times, monotimes]
 import std/[options, sets, deques, hashes, tables]
 import std/[nativesockets, os, selectors, random]
 
@@ -75,12 +75,25 @@ type
     clientSocket: SocketHandle
     clientId: uint64
 
+  RequestBodyStream* = object ## Identifies one incoming request body stream.
+    server: Server
+    clientSocket: SocketHandle
+    clientId: uint64
+    streamId: uint64
+
   Message* = object
     kind*: MessageKind
     data*: string
 
   WebSocketEvent* = enum
     OpenEvent, MessageEvent, ErrorEvent, CloseEvent
+
+  RequestBodyEventKind* = enum ## Incoming request body lifecycle event kinds.
+    RequestBodyOpen, RequestBodyChunk, RequestBodyEnd, RequestBodyError
+
+  RequestBodyEvent* = object ## One serialized incoming request body event.
+    kind*: RequestBodyEventKind ## The lifecycle event kind.
+    data*: string ## Decoded body bytes for `RequestBodyChunk`; empty otherwise.
 
   MessageKind* = enum
     TextMessage, BinaryMessage, Ping, Pong
@@ -93,19 +106,65 @@ type
     message: Message
   ) {.gcsafe.}
 
+  RequestBodyHandler* = proc(
+    request: Request,
+    stream: RequestBodyStream,
+    event: RequestBodyEvent
+  ) {.gcsafe.}
+    ## Handles incoming request bodies selected for streaming.
+    ##
+    ## Calls are serialized per stream and run on worker threads. During
+    ## `RequestBodyOpen`, call `accept`, `buffer`, or `reject`. If no decision is
+    ## made, Mummy preserves compatibility by buffering the body and later
+    ## invoking the ordinary request handler. An accepted stream does not invoke
+    ## the ordinary request handler: respond by `RequestBodyEnd` instead. Mummy
+    ## sends a 500 response if the end callback returns without one. Returning
+    ## from each chunk callback permits the selector thread to read the next
+    ## bounded chunk. `RequestBodyError` is terminal and allows sinks to clean up
+    ## after a disconnect, protocol error, or server shutdown.
+
+  RequestBodyDecision = enum
+    BodyUndecided, BodyBuffered, BodyStreamed, BodyRejected
+
+  RequestBodyUpdate = object
+    event: RequestBodyEvent
+
+  RequestBodyState = object
+    request: Request
+    updates: Deque[RequestBodyUpdate]
+    claimed, handlingEvent, terminalQueued: bool
+    currentEvent: RequestBodyEventKind
+    decision: RequestBodyDecision
+
+  RequestBodyStore = object
+    lock: Lock
+    cond: Cond
+    states: Table[RequestBodyStream, RequestBodyState]
+
+  RequestBodyControlKind = enum
+    BodyDecisionReady, BodyChunkHandled, BodyHandlerFinished
+
+  RequestBodyControl = object
+    stream: RequestBodyStream
+    kind: RequestBodyControlKind
+    decision: RequestBodyDecision
+
   ServerObj = object
     handler: RequestHandler
     websocketHandler: WebSocketHandler
-    maxHeadersLen, maxBodyLen, maxMessageLen: int
+    requestBodyHandler: RequestBodyHandler
+    maxHeadersLen, maxBodyLen, maxMessageLen, requestBodyChunkSize: int
     tcpNoDelay: bool
     rand: Rand
+    nextRequestBodyStreamId: uint64
     workerThreads: seq[Thread[Server]]
     serving: Atomic[bool]
-    destroyCalled: bool
+    destroyCalled, finishingRequestBodies: bool
     listeningSockets: seq[SocketHandle]
     selector: Selector[DataEntry]
-    responseQueued, sendQueued, shutdown: SelectEvent
-    responseQueuedInitialized, sendQueuedInitialized, shutdownInitialized: bool
+    responseQueued, sendQueued, requestBodyControlQueued, shutdown: SelectEvent
+    responseQueuedInitialized, sendQueuedInitialized: bool
+    requestBodyControlQueuedInitialized, shutdownInitialized: bool
     clientSockets: HashSet[SocketHandle]
     taskQueueLock: Lock
     taskQueueCond: Cond
@@ -114,6 +173,9 @@ type
     responseQueueLock: Lock
     sendQueue: Deque[OutgoingBuffer]
     sendQueueLock: Lock
+    requestBodyControlQueue: Deque[RequestBodyControl]
+    requestBodyControlQueueLock: Lock
+    requestBodies: RequestBodyStore
     websocketClaimed: Table[WebSocket, bool]
     websocketQueues: Table[WebSocket, Deque[WebSocketUpdate]]
     websocketQueuesLock: Lock
@@ -123,6 +185,7 @@ type
   WorkerTask = object
     request: Request
     websocket: WebSocket
+    requestBody: RequestBodyStream
 
   DataEntryKind = enum
     ServerSocketEntry, ClientSocketEntry, EventEntry
@@ -144,7 +207,12 @@ type
       closeFrameQueuedAt: float64
       upgradedToWebSocket, closeFrameSent: bool
       sendsWaitingForUpgrade: seq[OutgoingBuffer]
+      readPaused, closeAfterResponse: bool
       requestCounter: int # Incoming request incs, outgoing response decs
+
+  IncomingBodyMode = enum
+    IncomingBodyBuffered, IncomingBodyOpening, IncomingBodyStreaming,
+    IncomingBodyRejected, IncomingBodyEnding
 
   IncomingRequestState = object
     headersParsed: bool
@@ -158,6 +226,11 @@ type
     queryParams: QueryParams
     headers: HttpHeaders
     body: string
+    bodyMode: IncomingBodyMode
+    bodyStream: RequestBodyStream
+    bodyBytesReceived: int
+    chunkBytesRemaining: int
+    readingChunkData: bool
 
   IncomingFrameState = object
     opcode: uint8
@@ -187,6 +260,74 @@ proc `$`*(request: Request): string {.gcsafe.} =
 
 proc `$`*(websocket: WebSocket): string =
   "WebSocket " & $cast[uint](hash(websocket))
+
+proc `==`*(a, b: RequestBodyStream): bool {.raises: [].} =
+  ## Returns whether two handles identify the same incoming request body.
+  a.server == b.server and
+    a.clientSocket == b.clientSocket and
+    a.clientId == b.clientId and
+    a.streamId == b.streamId
+
+proc hash*(stream: RequestBodyStream): Hash {.raises: [].} =
+  ## Returns a hash suitable for using a request body stream as a table key.
+  result = hash(cast[uint](stream.server))
+  result = result !& hash(stream.clientSocket)
+  result = result !& hash(stream.clientId)
+  result = !$ (result !& hash(stream.streamId))
+
+proc `$`*(stream: RequestBodyStream): string {.raises: [].} =
+  ## Returns a diagnostic representation of an incoming request body stream.
+  "RequestBodyStream " & $cast[uint](hash(stream))
+
+proc chooseRequestBody(
+  stream: RequestBodyStream,
+  decision: RequestBodyDecision,
+  request: var Request
+): bool {.raises: [].} =
+  if stream.server == nil:
+    return false
+
+  withLock stream.server.requestBodies.lock:
+    try:
+      var state = addr stream.server.requestBodies.states[stream]
+      if not state.handlingEvent:
+        return false
+
+      case decision
+      of BodyBuffered, BodyStreamed:
+        if state.currentEvent != RequestBodyOpen or
+            state.decision != BodyUndecided:
+          return false
+      of BodyRejected:
+        if state.currentEvent notin {RequestBodyOpen, RequestBodyChunk} or
+            state.decision == BodyRejected:
+          return false
+        state.terminalQueued = true
+      of BodyUndecided:
+        return false
+
+      state.decision = decision
+      request = state.request
+      result = true
+    except KeyError:
+      discard
+
+proc accept*(stream: RequestBodyStream): bool {.raises: [], gcsafe.} =
+  ## Selects event-driven delivery for this body.
+  ##
+  ## This succeeds only during `RequestBodyOpen`. Body data is decoded from HTTP
+  ## framing and delivered through serialized `RequestBodyChunk` events.
+  var request: Request
+  stream.chooseRequestBody(BodyStreamed, request)
+
+proc buffer*(stream: RequestBodyStream): bool {.raises: [], gcsafe.} =
+  ## Selects compatibility buffering for this body.
+  ##
+  ## This succeeds only during `RequestBodyOpen`. After the complete body has
+  ## been received, the ordinary request handler is invoked with `request.body`
+  ## populated exactly as it is when no request body handler is configured.
+  var request: Request
+  stream.chooseRequestBody(BodyBuffered, request)
 
 proc headerContainsToken(headers: var HttpHeaders, key, token: string): bool =
   # If a header looks like `Accept-Encoding: gzip,deflate` then we may want to
@@ -235,6 +376,33 @@ proc updateHandle2(
     selector.updateHandle(socket, events)
   except ValueError: # Why ValueError?
     raise newException(IOSelectorsException, getCurrentExceptionMsg())
+
+proc clientEvents(dataEntry: DataEntry): set[Event] {.raises: [].} =
+  if not dataEntry.readPaused:
+    result.incl(Event.Read)
+  if dataEntry.outgoingBuffers.len > 0:
+    result.incl(Event.Write)
+
+proc updateClientEvents(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry
+) {.raises: [IOSelectorsException].} =
+  server.selector.updateHandle2(clientSocket, dataEntry.clientEvents())
+
+proc pauseClientRead(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry
+) {.raises: [].} =
+  dataEntry.readPaused = true
+  try:
+    server.updateClientEvents(clientSocket, dataEntry)
+  except IOSelectorsException as e:
+    logSafely:
+      error "Error pausing request body reads",
+        clientSocket = cast[uint](clientSocket),
+        exception = e.msg
 
 proc triggerEvent(event: SelectEvent) {.raises: [].} =
   try:
@@ -399,6 +567,26 @@ proc respond*(
   if queueWasEmpty:
     triggerEvent(request.server.responseQueued)
 
+proc reject*(
+  stream: RequestBodyStream,
+  statusCode = 413,
+  headers: sink HttpHeaders = emptyHttpHeaders(),
+  body: sink string = ""
+): bool {.raises: [], gcsafe.} =
+  ## Rejects this request body and sends a response that closes the connection.
+  ##
+  ## This succeeds during `RequestBodyOpen` or `RequestBodyChunk`. Closing the
+  ## connection avoids buffering or draining the remainder of the rejected
+  ## body. Previously delivered chunks remain the handler's responsibility.
+  var request: Request
+  if not stream.chooseRequestBody(BodyRejected, request):
+    return false
+
+  if request != nil and not request.responded:
+    headers["Connection"] = "close"
+    request.respond(statusCode, move headers, move body)
+  result = true
+
 proc upgradeToWebSocket*(
   request: Request
 ): WebSocket {.raises: [MummyError], gcsafe.} =
@@ -451,6 +639,123 @@ proc upgradeToWebSocket*(
 
   request.respond(101, headers)
 
+proc postTask(server: Server, task: WorkerTask) {.raises: [], gcsafe.}
+
+proc addRequestBodyState(
+  server: Server,
+  stream: RequestBodyStream,
+  request: Request
+) {.raises: [].} =
+  withLock server.requestBodies.lock:
+    server.requestBodies.states[stream] = RequestBodyState(
+      request: request,
+      updates: initDeque[RequestBodyUpdate]()
+    )
+
+proc postRequestBodyUpdate(
+  stream: RequestBodyStream,
+  update: sink RequestBodyUpdate,
+  urgent = false
+) {.raises: [], gcsafe.} =
+  var needsTask: bool
+  withLock stream.server.requestBodies.lock:
+    try:
+      var state = addr stream.server.requestBodies.states[stream]
+      if state.terminalQueued:
+        return
+      if update.event.kind in {RequestBodyEnd, RequestBodyError}:
+        state.terminalQueued = true
+      state.updates.addLast(move update)
+      if not state.claimed:
+        state.claimed = true
+        needsTask = true
+    except KeyError:
+      discard
+
+  if needsTask:
+    if urgent:
+      withLock stream.server.taskQueueLock:
+        stream.server.taskQueue.addFirst(WorkerTask(requestBody: stream))
+      signal(stream.server.taskQueueCond)
+    else:
+      stream.server.postTask(WorkerTask(requestBody: stream))
+
+proc popRequestBodyUpdate(
+  server: Server,
+  stream: RequestBodyStream,
+  update: var RequestBodyUpdate,
+  request: var Request
+): bool {.raises: [].} =
+  withLock server.requestBodies.lock:
+    try:
+      var state = addr server.requestBodies.states[stream]
+      if state.updates.len > 0:
+        update = state.updates.popFirst()
+        state.handlingEvent = true
+        state.currentEvent = update.event.kind
+        request = state.request
+        return true
+      state.claimed = false
+    except KeyError:
+      discard
+
+proc requestBodyDecision(
+  server: Server,
+  stream: RequestBodyStream,
+  defaultToBuffer: bool
+): RequestBodyDecision {.raises: [].} =
+  withLock server.requestBodies.lock:
+    try:
+      var state = addr server.requestBodies.states[stream]
+      state.handlingEvent = false
+      if defaultToBuffer and state.decision == BodyUndecided:
+        state.decision = BodyBuffered
+      result = state.decision
+    except KeyError:
+      discard
+
+proc removeRequestBodyState(
+  server: Server,
+  stream: RequestBodyStream
+): Request {.raises: [].} =
+  withLock server.requestBodies.lock:
+    try:
+      result = server.requestBodies.states[stream].request
+      server.requestBodies.states.del(stream)
+      broadcast(server.requestBodies.cond)
+    except KeyError:
+      discard
+
+proc removeRejectedRequestBodyIfIdle(
+  server: Server,
+  stream: RequestBodyStream
+): Request {.raises: [].} =
+  withLock server.requestBodies.lock:
+    try:
+      let state = addr server.requestBodies.states[stream]
+      if state.decision == BodyRejected and state.updates.len == 0:
+        result = state.request
+        server.requestBodies.states.del(stream)
+        broadcast(server.requestBodies.cond)
+    except KeyError:
+      discard
+
+proc postRequestBodyControl(
+  server: Server,
+  control: sink RequestBodyControl
+) {.raises: [].} =
+  var queueWasEmpty: bool
+  withLock server.requestBodyControlQueueLock:
+    queueWasEmpty = server.requestBodyControlQueue.len == 0
+    server.requestBodyControlQueue.addLast(move control)
+  if queueWasEmpty:
+    triggerEvent(server.requestBodyControlQueued)
+
+proc destroyRequest(request: Request) {.raises: [].} =
+  if request != nil:
+    `=destroy`(request[])
+    deallocShared(request)
+
 proc workerProc(server: Server) {.raises: [].} =
   # The worker threads run the task queue here
   let server = server
@@ -467,9 +772,8 @@ proc workerProc(server: Server) {.raises: [].} =
             stackTrace = e.getStackTrace()
         if not task.request.responded:
           task.request.respond(500)
-      `=destroy`(task.request[])
-      deallocShared(task.request)
-    else: # WebSocket
+      destroyRequest(task.request)
+    elif task.websocket.server != nil:
       withLock server.websocketQueuesLock:
         if server.websocketClaimed.getOrDefault(task.websocket, true):
           # If this websocket has been claimed or if it is not present in
@@ -510,6 +814,69 @@ proc workerProc(server: Server) {.raises: [].} =
 
         if update.get.event == CloseEvent:
           break
+    else:
+      while true:
+        var
+          update: RequestBodyUpdate
+          request: Request
+        if not server.popRequestBodyUpdate(task.requestBody, update, request):
+          break
+
+        let eventKind = update.event.kind
+        var handlerFailed: bool
+        try:
+          server.requestBodyHandler(request, task.requestBody, move update.event)
+        except Exception as e:
+          handlerFailed = true
+          logSafely:
+            error "Request body handler exception",
+              request = $request,
+              stream = $task.requestBody,
+              event = eventKind,
+              exception = e.msg,
+              stackTrace = e.getStackTrace()
+
+        case eventKind
+        of RequestBodyOpen, RequestBodyChunk:
+          if handlerFailed:
+            discard task.requestBody.reject(statusCode = 500)
+
+          let decision = server.requestBodyDecision(
+            task.requestBody,
+            defaultToBuffer = eventKind == RequestBodyOpen and not handlerFailed
+          )
+          server.postRequestBodyControl(RequestBodyControl(
+            stream: task.requestBody,
+            kind: if eventKind == RequestBodyOpen:
+              BodyDecisionReady
+            else:
+              BodyChunkHandled,
+            decision: decision
+          ))
+
+          if decision == BodyRejected:
+            let rejectedRequest = server.removeRejectedRequestBodyIfIdle(
+              task.requestBody
+            )
+            destroyRequest(rejectedRequest)
+        of RequestBodyEnd:
+          discard server.requestBodyDecision(
+            task.requestBody,
+            defaultToBuffer = false
+          )
+          if request != nil and not request.responded:
+            request.respond(500)
+          server.postRequestBodyControl(RequestBodyControl(
+            stream: task.requestBody,
+            kind: BodyHandlerFinished
+          ))
+          destroyRequest(server.removeRequestBodyState(task.requestBody))
+        of RequestBodyError:
+          discard server.requestBodyDecision(
+            task.requestBody,
+            defaultToBuffer = false
+          )
+          destroyRequest(server.removeRequestBodyState(task.requestBody))
 
   when defined(mummyCheck22398):
     var loggedExceptionLeak: bool
@@ -525,9 +892,14 @@ proc workerProc(server: Server) {.raises: [].} =
       return
 
     let task = server.taskQueue.popFirst()
+    let skipDuringShutdown = server.finishingRequestBodies and
+      (task.request != nil or task.websocket.server != nil)
     release(server.taskQueueLock)
 
-    runTask(task)
+    if skipDuringShutdown:
+      destroyRequest(task.request)
+    else:
+      runTask(task)
 
     when defined(mummyCheck22398):
       # https://github.com/nim-lang/Nim/issues/22398
@@ -536,7 +908,7 @@ proc workerProc(server: Server) {.raises: [].} =
           error "Detected leaked exception", exception = getCurrentExceptionMsg()
         loggedExceptionLeak = true
 
-proc postTask(server: Server, task: WorkerTask) {.raises: [].} =
+proc postTask(server: Server, task: WorkerTask) {.raises: [], gcsafe.} =
   withLock server.taskQueueLock:
     server.taskQueue.addLast(task)
   signal(server.taskQueueCond)
@@ -700,7 +1072,7 @@ proc afterRecvWebSocket(
     if dataEntry.bytesReceived == frameLen:
       dataEntry.bytesReceived = 0
     else:
-      copyMem(
+      moveMem(
         dataEntry.recvBuf[0].addr,
         dataEntry.recvBuf[frameLen].addr,
         dataEntry.bytesReceived - frameLen
@@ -754,12 +1126,11 @@ proc afterRecvWebSocket(
         )
       websocket.postWebSocketUpdate(update)
 
-proc popRequest(
+proc newRequest(
   server: Server,
   clientSocket: SocketHandle,
   dataEntry: DataEntry
 ): Request {.raises: [].} =
-  ## Pops the completed HttpRequest from the socket and resets the parse state.
   result = cast[Request](allocShared0(sizeof(RequestObj)))
   result.server = server
   result.clientSocket = clientSocket
@@ -771,15 +1142,107 @@ proc popRequest(
   result.path = move dataEntry.requestState.path
   result.queryParams = move dataEntry.requestState.queryParams
   result.headers = move dataEntry.requestState.headers
-  result.body = move dataEntry.requestState.body
-  result.body.setLen(dataEntry.requestState.contentLength)
-  dataEntry.requestState = IncomingRequestState()
   inc dataEntry.requestCounter
+
+proc popRequest(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry
+): Request {.raises: [].} =
+  ## Pops the completed HttpRequest from the socket and resets the parse state.
+  if dataEntry.requestState.bodyStream.server == nil:
+    result = server.newRequest(clientSocket, dataEntry)
+  else:
+    result = server.removeRequestBodyState(dataEntry.requestState.bodyStream)
+
+  result.body = move dataEntry.requestState.body
+  result.body.setLen(dataEntry.requestState.bodyBytesReceived)
+  dataEntry.requestState = IncomingRequestState()
   if dataEntry.bytesReceived > 0:
     logSafely:
       debug "Receive buffer not empty after request",
         clientSocket = cast[uint](clientSocket),
         bytesReceived = dataEntry.bytesReceived
+
+proc beginRequestBodyStream(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry
+) {.raises: [].} =
+  inc server.nextRequestBodyStreamId
+  if server.nextRequestBodyStreamId == 0:
+    inc server.nextRequestBodyStreamId
+
+  let stream = RequestBodyStream(
+    server: server,
+    clientSocket: clientSocket,
+    clientId: dataEntry.clientId,
+    streamId: server.nextRequestBodyStreamId
+  )
+  let request = server.newRequest(clientSocket, dataEntry)
+
+  dataEntry.requestState.bodyMode = IncomingBodyOpening
+  dataEntry.requestState.bodyStream = stream
+  server.addRequestBodyState(stream, request)
+  server.pauseClientRead(clientSocket, dataEntry)
+  stream.postRequestBodyUpdate(RequestBodyUpdate(
+    event: RequestBodyEvent(kind: RequestBodyOpen)
+  ))
+
+proc consumeReceivedBytes(dataEntry: DataEntry, count: int) {.raises: [].} =
+  let bytesRemaining = dataEntry.bytesReceived - count
+  if bytesRemaining > 0:
+    moveMem(
+      dataEntry.recvBuf[0].addr,
+      dataEntry.recvBuf[count].addr,
+      bytesRemaining
+    )
+  dataEntry.bytesReceived = bytesRemaining
+
+proc appendBufferedBody(dataEntry: DataEntry, count: int) {.raises: [].} =
+  let newLength = dataEntry.requestState.bodyBytesReceived + count
+  if dataEntry.requestState.body.len < newLength:
+    dataEntry.requestState.body.setLen(max(
+      dataEntry.requestState.body.len * 2,
+      newLength
+    ))
+  if count > 0:
+    copyMem(
+      dataEntry.requestState.body[
+        dataEntry.requestState.bodyBytesReceived
+      ].addr,
+      dataEntry.recvBuf[0].addr,
+      count
+    )
+  dataEntry.requestState.bodyBytesReceived = newLength
+  dataEntry.consumeReceivedBytes(count)
+
+proc postRequestBodyChunk(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry,
+  count: int
+) {.raises: [].} =
+  var data = newString(count)
+  if count > 0:
+    copyMem(data[0].addr, dataEntry.recvBuf[0].addr, count)
+  dataEntry.consumeReceivedBytes(count)
+  dataEntry.requestState.bodyBytesReceived += count
+  server.pauseClientRead(clientSocket, dataEntry)
+  dataEntry.requestState.bodyStream.postRequestBodyUpdate(RequestBodyUpdate(
+    event: RequestBodyEvent(kind: RequestBodyChunk, data: move data)
+  ))
+
+proc finishStreamingRequestBody(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry
+) {.raises: [].} =
+  dataEntry.requestState.bodyMode = IncomingBodyEnding
+  server.pauseClientRead(clientSocket, dataEntry)
+  dataEntry.requestState.bodyStream.postRequestBodyUpdate(RequestBodyUpdate(
+    event: RequestBodyEvent(kind: RequestBodyEnd)
+  ))
 
 proc afterRecvHttp(
   server: Server,
@@ -789,6 +1252,7 @@ proc afterRecvHttp(
   # We do not expect pipelined requests so log if any new data is received
   # while a request is outstanding
   if dataEntry.requestCounter > 0 and
+    not dataEntry.requestState.headersParsed and
     not dataEntry.requestState.loggedUnexpectedData:
     logSafely:
       debug "Received data before the previous request has been responded to",
@@ -971,7 +1435,7 @@ proc afterRecvHttp(
       # without having to copy the headers out
       # Preferring to copy the headers out to avoid the worst case of copying
       # huge bodies
-      copyMem(
+      moveMem(
         dataEntry.recvBuf[0].addr,
         dataEntry.recvBuf[bodyStart].addr,
         dataEntry.bytesReceived - bodyStart
@@ -986,114 +1450,133 @@ proc afterRecvHttp(
     # Mark that headers have been parsed, must end this block
     dataEntry.requestState.headersParsed = true
 
-  # Headers have been parsed, now for the body
-
-  if dataEntry.requestState.chunked: # Chunked request
-    # Process as many chunks as we have
-    while true:
-      if dataEntry.bytesReceived < 3:
-        return false # Need to receive more bytes
-
-      # Look for the end of the chunk length
-      let chunkLenEnd = dataEntry.recvBuf.find(
-        "\r\n",
-        0,
-        min(dataEntry.bytesReceived - 1, 19) # Inclusive with a reasonable max
-      )
-      if chunkLenEnd < 0: # Chunk length end not found
-        if dataEntry.bytesReceived > 19:
-          return true # We should have found it, close the connection
-        return false # Try again after receiving more bytes
-
-      # After we know we've seen the end of the chunk length, parse it
-      var chunkLen: int
-      try:
-        chunkLen =
-          strictParseHex(dataEntry.recvBuf.toOpenArray(0, chunkLenEnd - 1))
-      except Exception as e:
-        return true # Parsing chunk length failed, close the connection
-
-      if dataEntry.requestState.contentLength + chunkLen > server.maxBodyLen:
-        logSafely:
-          debug "Dropped connection",
-            reason = "body too long",
-            clientSocket = cast[uint](clientSocket),
-            bodyLen = dataEntry.requestState.contentLength + chunkLen,
-            maxBodyLen = server.maxBodyLen
-        return true # Body is too large, close the connection
-
-      let chunkStart = chunkLenEnd + 2
-      if dataEntry.bytesReceived < chunkStart + chunkLen + 2:
-        return false # Need to receive more bytes
-
-      # Make room in the body buffer for this chunk
-      let newContentLength = dataEntry.requestState.contentLength + chunkLen
-      if dataEntry.requestState.body.len < newContentLength:
-        let newLen = max(dataEntry.requestState.body.len * 2, newContentLength)
-        dataEntry.requestState.body.setLen(newLen)
-
-      if chunkLen > 0:
-        copyMem(
-          dataEntry.requestState.body[dataEntry.requestState.contentLength].addr,
-          dataEntry.recvBuf[chunkStart].addr,
-          chunkLen
-        )
-        dataEntry.requestState.contentLength += chunkLen
-
-      # Remove this chunk from the receive buffer
-      let
-        nextChunkStart = chunkLenEnd + 2 + chunkLen + 2
-        bytesRemaining = dataEntry.bytesReceived - nextChunkStart
-      copyMem(
-        dataEntry.recvBuf[0].addr,
-        dataEntry.recvBuf[nextChunkStart].addr,
-        bytesRemaining
-      )
-      dataEntry.bytesReceived = bytesRemaining
-
-      if chunkLen == 0: # A chunk of len 0 marks the end of the request body
-        let request = server.popRequest(clientSocket, dataEntry)
-        server.postTask(WorkerTask(request: request))
-  else:
-    if dataEntry.requestState.contentLength > server.maxBodyLen:
+    if not dataEntry.requestState.chunked and
+        dataEntry.requestState.contentLength > server.maxBodyLen:
       logSafely:
         debug "Dropped connection",
           reason = "body too long",
           clientSocket = cast[uint](clientSocket),
           bodyLen = dataEntry.requestState.contentLength,
           maxBodyLen = server.maxBodyLen
-      return true # Body is too large, close the connection
+      return true
 
+    if server.requestBodyHandler != nil and
+        (dataEntry.requestState.chunked or
+          dataEntry.requestState.contentLength > 0):
+      server.beginRequestBodyStream(clientSocket, dataEntry)
+      return false
+
+  # Headers have been parsed, now for the body
+
+  if dataEntry.requestState.bodyMode in {
+      IncomingBodyOpening, IncomingBodyRejected, IncomingBodyEnding}:
+    return false
+
+  if dataEntry.requestState.chunked:
+    while true:
+      if not dataEntry.requestState.readingChunkData:
+        if dataEntry.bytesReceived < 3:
+          return false
+
+        let chunkLenEnd = dataEntry.recvBuf.find(
+          "\r\n",
+          0,
+          min(dataEntry.bytesReceived - 1, 19)
+        )
+        if chunkLenEnd < 0:
+          if dataEntry.bytesReceived > 19:
+            return true
+          return false
+
+        var chunkLen: int
+        try:
+          chunkLen = strictParseHex(
+            dataEntry.recvBuf.toOpenArray(0, chunkLenEnd - 1)
+          )
+        except Exception:
+          return true
+
+        if chunkLen > server.maxBodyLen -
+            dataEntry.requestState.bodyBytesReceived:
+          logSafely:
+            debug "Dropped connection",
+              reason = "body too long",
+              clientSocket = cast[uint](clientSocket),
+              bodyBytesReceived = dataEntry.requestState.bodyBytesReceived,
+              nextChunkLen = chunkLen,
+              maxBodyLen = server.maxBodyLen
+          return true
+
+        dataEntry.consumeReceivedBytes(chunkLenEnd + 2)
+        if chunkLen == 0:
+          if dataEntry.bytesReceived < 2:
+            return false
+          if dataEntry.recvBuf[0] != '\r' or dataEntry.recvBuf[1] != '\n':
+            return true
+          dataEntry.consumeReceivedBytes(2)
+          if dataEntry.requestState.bodyMode == IncomingBodyStreaming:
+            server.finishStreamingRequestBody(clientSocket, dataEntry)
+          else:
+            let request = server.popRequest(clientSocket, dataEntry)
+            server.postTask(WorkerTask(request: request))
+          return false
+
+        dataEntry.requestState.chunkBytesRemaining = chunkLen
+        dataEntry.requestState.readingChunkData = true
+
+      if dataEntry.requestState.chunkBytesRemaining == 0:
+        if dataEntry.bytesReceived < 2:
+          return false
+        if dataEntry.recvBuf[0] != '\r' or dataEntry.recvBuf[1] != '\n':
+          return true
+        dataEntry.consumeReceivedBytes(2)
+        dataEntry.requestState.readingChunkData = false
+      elif dataEntry.bytesReceived == 0:
+        return false
+      else:
+        var count = min(
+          dataEntry.requestState.chunkBytesRemaining,
+          dataEntry.bytesReceived
+        )
+        if dataEntry.requestState.bodyMode == IncomingBodyStreaming:
+          count = min(count, server.requestBodyChunkSize)
+          dataEntry.requestState.chunkBytesRemaining -= count
+          server.postRequestBodyChunk(clientSocket, dataEntry, count)
+          return false
+
+        dataEntry.requestState.chunkBytesRemaining -= count
+        dataEntry.appendBufferedBody(count)
+  elif dataEntry.requestState.bodyMode == IncomingBodyStreaming:
+    let bytesRemaining = dataEntry.requestState.contentLength -
+      dataEntry.requestState.bodyBytesReceived
+    if bytesRemaining == 0:
+      server.finishStreamingRequestBody(clientSocket, dataEntry)
+    elif dataEntry.bytesReceived > 0:
+      let count = min(
+        min(bytesRemaining, dataEntry.bytesReceived),
+        server.requestBodyChunkSize
+      )
+      server.postRequestBodyChunk(clientSocket, dataEntry, count)
+    return false
+  else:
     if dataEntry.bytesReceived < dataEntry.requestState.contentLength:
-      return false # Need to receive more bytes
+      return false
 
-    # We have the entire request body
-
-    # If this request has a body
     if dataEntry.requestState.contentLength > 0:
-      # If the receive buffer only has the body in it, just move it and reset
-      # the receive buffer
       if dataEntry.requestState.contentLength == dataEntry.bytesReceived:
         dataEntry.requestState.body = move dataEntry.recvBuf
         dataEntry.recvBuf.setLen(initialRecvBufLen)
         dataEntry.bytesReceived = 0
       else:
-        # Copy the body out of the buffer
         dataEntry.requestState.body.setLen(dataEntry.requestState.contentLength)
         copyMem(
           dataEntry.requestState.body[0].addr,
           dataEntry.recvBuf[0].addr,
           dataEntry.requestState.contentLength
         )
-        # Remove this request from the receive buffer
-        let bytesRemaining =
-          dataEntry.bytesReceived - dataEntry.requestState.contentLength
-        copyMem(
-          dataEntry.recvBuf[0].addr,
-          dataEntry.recvBuf[dataEntry.requestState.contentLength].addr,
-          bytesRemaining
-        )
-        dataEntry.bytesReceived = bytesRemaining
+        dataEntry.consumeReceivedBytes(dataEntry.requestState.contentLength)
+      dataEntry.requestState.bodyBytesReceived =
+        dataEntry.requestState.contentLength
 
     let request = server.popRequest(clientSocket, dataEntry)
     server.postTask(WorkerTask(request: request))
@@ -1109,6 +1592,63 @@ proc afterRecv(
     server.afterRecvWebSocket(clientSocket, dataEntry)
   else:
     server.afterRecvHttp(clientSocket, dataEntry)
+
+proc resumeRequestBody(
+  server: Server,
+  clientSocket: SocketHandle,
+  dataEntry: DataEntry
+): bool {.raises: [IOSelectorsException].} =
+  dataEntry.readPaused = false
+  result = server.afterRecvHttp(clientSocket, dataEntry)
+  if not result and not dataEntry.readPaused:
+    server.updateClientEvents(clientSocket, dataEntry)
+
+proc processRequestBodyControl(
+  server: Server,
+  control: RequestBodyControl,
+  dataEntry: DataEntry
+): bool {.raises: [IOSelectorsException].} =
+  if dataEntry.requestState.bodyStream != control.stream:
+    return false
+
+  template stopRejectedBody() =
+    dataEntry.requestState.bodyMode = IncomingBodyRejected
+    dataEntry.readPaused = true
+    dataEntry.closeAfterResponse = true
+    server.updateClientEvents(control.stream.clientSocket, dataEntry)
+    result = dataEntry.requestCounter == 0 and
+      dataEntry.outgoingBuffers.len == 0
+
+  case control.kind
+  of BodyDecisionReady:
+    if dataEntry.requestState.bodyMode != IncomingBodyOpening:
+      return false
+    case control.decision
+    of BodyBuffered:
+      dataEntry.requestState.bodyMode = IncomingBodyBuffered
+      result = server.resumeRequestBody(control.stream.clientSocket, dataEntry)
+    of BodyStreamed:
+      dataEntry.requestState.bodyMode = IncomingBodyStreaming
+      result = server.resumeRequestBody(control.stream.clientSocket, dataEntry)
+    of BodyRejected, BodyUndecided:
+      stopRejectedBody()
+  of BodyChunkHandled:
+    if dataEntry.requestState.bodyMode != IncomingBodyStreaming:
+      return false
+    if control.decision == BodyRejected:
+      stopRejectedBody()
+    else:
+      result = server.resumeRequestBody(control.stream.clientSocket, dataEntry)
+  of BodyHandlerFinished:
+    if dataEntry.requestState.bodyMode == IncomingBodyEnding:
+      dataEntry.requestState = IncomingRequestState()
+      dataEntry.readPaused = false
+      server.updateClientEvents(control.stream.clientSocket, dataEntry)
+      if dataEntry.bytesReceived > 0:
+        logSafely:
+          debug "Receive buffer not empty after streamed request",
+            clientSocket = cast[uint](control.stream.clientSocket),
+            bytesReceived = dataEntry.bytesReceived
 
 proc afterSend(
   server: Server,
@@ -1128,7 +1668,9 @@ proc afterSend(
       return true
   # If we don't have any more outgoing buffers, update the selector
   if dataEntry.outgoingBuffers.len == 0:
-    server.selector.updateHandle2(clientSocket, {Read})
+    if dataEntry.closeAfterResponse:
+      return true
+    server.updateClientEvents(clientSocket, dataEntry)
 
 proc acceptClient(
   listeningSocket: SocketHandle
@@ -1178,7 +1720,44 @@ proc isTransientAcceptError(error: OSErrorCode): bool =
   else:
     error.int32 in [EAGAIN, EWOULDBLOCK, EINTR, ECONNABORTED]
 
-proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
+proc abortRequestBodies(server: Server) {.raises: [], gcsafe.} =
+  var streams: seq[RequestBodyStream]
+  withLock server.requestBodies.lock:
+    for stream in server.requestBodies.states.keys:
+      streams.add(stream)
+
+  if server.workerThreads.len == 0:
+    var requests: seq[Request]
+    withLock server.requestBodies.lock:
+      for state in server.requestBodies.states.values:
+        requests.add(state.request)
+      server.requestBodies.states.clear()
+      broadcast(server.requestBodies.cond)
+    for request in requests:
+      destroyRequest(request)
+    return
+
+  for stream in streams:
+    stream.postRequestBodyUpdate(
+      RequestBodyUpdate(event: RequestBodyEvent(kind: RequestBodyError)),
+      urgent = true
+    )
+
+  acquire(server.requestBodies.lock)
+  while server.requestBodies.states.len > 0:
+    wait(server.requestBodies.cond, server.requestBodies.lock)
+  release(server.requestBodies.lock)
+
+proc destroy(server: Server, joinThreads: bool) {.raises: [], gcsafe.} =
+  if joinThreads:
+    withLock server.taskQueueLock:
+      server.finishingRequestBodies = true
+  for listeningSocket in server.listeningSockets:
+    listeningSocket.close()
+  for clientSocket in server.clientSockets:
+    clientSocket.close()
+  if joinThreads:
+    server.abortRequestBodies()
   withLock server.taskQueueLock:
     server.destroyCalled = true
   if server.selector != nil:
@@ -1186,10 +1765,6 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
       server.selector.close()
     except Exception as e:
       discard # Ignore
-  for listeningSocket in server.listeningSockets:
-    listeningSocket.close()
-  for clientSocket in server.clientSockets:
-    clientSocket.close()
   broadcast(server.taskQueueCond)
   if joinThreads:
     joinThreads(server.workerThreads)
@@ -1197,6 +1772,9 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     deinitCond(server.taskQueueCond)
     deinitLock(server.responseQueueLock)
     deinitLock(server.sendQueueLock)
+    deinitLock(server.requestBodyControlQueueLock)
+    deinitLock(server.requestBodies.lock)
+    deinitCond(server.requestBodies.cond)
     deinitLock(server.websocketQueuesLock)
     if server.responseQueuedInitialized:
       try:
@@ -1206,6 +1784,11 @@ proc destroy(server: Server, joinThreads: bool) {.raises: [].} =
     if server.sendQueuedInitialized:
       try:
         server.sendQueued.close()
+      except Exception as e:
+        discard # Ignore
+    if server.requestBodyControlQueuedInitialized:
+      try:
+        server.requestBodyControlQueued.close()
       except Exception as e:
         discard # Ignore
     if server.shutdownInitialized:
@@ -1227,29 +1810,49 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
     needClosing: HashSet[SocketHandle]
     encodedResponses: seq[OutgoingBuffer]
     encodedFrames: seq[OutgoingBuffer]
+    requestBodyControls: seq[RequestBodyControl]
   while true:
     receivedFrom.setLen(0)
     sentTo.setLen(0)
     needClosing.clear()
     encodedResponses.setLen(0)
     encodedFrames.setLen(0)
+    requestBodyControls.setLen(0)
 
     let readyCount = server.selector.selectInto(-1, readyKeys)
 
     # Collapse these events into simple flags
-    var responseQueuedTriggered, sendQueuedTriggered, shutdownTriggered: bool
+    var
+      responseQueuedTriggered, sendQueuedTriggered: bool
+      requestBodyControlQueuedTriggered, shutdownTriggered: bool
     for i in 0 ..< readyCount:
       let readyKey = readyKeys[i]
       if User in readyKey.events:
         let eventDataEntry = server.selector.getData(readyKey.fd)
         if eventDataEntry.event == server.responseQueued:
           responseQueuedTriggered = true
-        if eventDataEntry.event == server.sendQueued:
+        elif eventDataEntry.event == server.sendQueued:
           sendQueuedTriggered = true
+        elif eventDataEntry.event == server.requestBodyControlQueued:
+          requestBodyControlQueuedTriggered = true
         elif eventDataEntry.event == server.shutdown:
           shutdownTriggered = true
         else:
           discard
+
+    if requestBodyControlQueuedTriggered:
+      withLock server.requestBodyControlQueueLock:
+        while server.requestBodyControlQueue.len > 0:
+          requestBodyControls.add(server.requestBodyControlQueue.popFirst())
+
+      for control in requestBodyControls:
+        let clientSocket = control.stream.clientSocket
+        if clientSocket in server.selector:
+          let dataEntry = server.selector.getData(clientSocket)
+          if dataEntry.kind == ClientSocketEntry and
+              dataEntry.clientId == control.stream.clientId:
+            if server.processRequestBodyControl(control, dataEntry):
+              needClosing.incl(clientSocket)
 
     if responseQueuedTriggered:
       # If we have responses queued move them to the outgoing buffer queue of
@@ -1265,9 +1868,9 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
             server.selector.getData(encodedResponse.clientSocket)
           if encodedResponse.clientId == clientDataEntry.clientId:
             clientDataEntry.outgoingBuffers.addLast(encodedResponse)
-            server.selector.updateHandle2(
+            server.updateClientEvents(
               encodedResponse.clientSocket,
-              {Read, Write}
+              clientDataEntry
             )
 
             clientDataEntry.requestCounter =
@@ -1333,9 +1936,9 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
                 clientDataEntry.outgoingBuffers.addLast(encodedFrame)
                 if encodedFrame.isCloseFrame:
                   clientDataEntry.closeFrameQueuedAt = epochTime()
-                server.selector.updateHandle2(
+                server.updateClientEvents(
                   encodedFrame.clientSocket,
-                  {Read, Write}
+                  clientDataEntry
                 )
             else:
               # If we haven't, queue this to wait for the upgrade response
@@ -1396,7 +1999,7 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
 
         let dataEntry = readyDataEntry
 
-        if Read in readyKey.events:
+        if Read in readyKey.events and not dataEntry.readPaused:
           # Expand the buffer if it is full
           if dataEntry.bytesReceived == dataEntry.recvBuf.len:
             dataEntry.recvBuf.setLen(dataEntry.recvBuf.len * 2)
@@ -1480,11 +2083,17 @@ proc loopForever(server: Server) {.raises: [OSError, IOSelectorsException].} =
           websocket.postWebSocketUpdate(error)
         var close = WebSocketUpdate(event: CloseEvent)
         websocket.postWebSocketUpdate(close)
+      if dataEntry.requestState.bodyStream.server != nil:
+        dataEntry.requestState.bodyStream.postRequestBodyUpdate(
+          RequestBodyUpdate(event: RequestBodyEvent(kind: RequestBodyError)),
+          urgent = true
+        )
 
 proc close*(server: Server) {.raises: [], gcsafe.} =
   ## Cleanly stops and deallocates the server.
-  ## In-flight request handler calls will be allowed to finish.
-  ## No additional handler calls will be dispatched even if they are queued.
+  ## In-flight handler calls are allowed to finish. Active request body streams
+  ## receive their terminal event so handlers can release resources. No queued
+  ## ordinary request or WebSocket handler calls are newly dispatched.
   if server.listeningSockets.len > 0:
     triggerEvent(server.shutdown)
   else:
@@ -1611,11 +2220,18 @@ proc newServer*(
   maxHeadersLen = 8 * 1024, # 8 KB
   maxBodyLen = 1024 * 1024, # 1 MB
   maxMessageLen = 64 * 1024, # 64 KB
-  tcpNoDelay = true
+  tcpNoDelay = true,
+  requestBodyHandler: RequestBodyHandler = nil,
+  requestBodyChunkSize: Positive = 64 * 1024 # 64 KB
 ): Server {.raises: [MummyError].} =
   ## Creates a new HTTP server. The request handler will be called for incoming
   ## HTTP requests. The WebSocket handler will be called for WebSocket events.
   ## Calls to the HTTP and WebSocket handlers are made from worker threads.
+  ## When `requestBodyHandler` is set, it may select event-driven delivery for
+  ## individual non-empty request bodies. Otherwise request bodies continue to
+  ## be buffered and passed to the ordinary request handler. Request body calls
+  ## are serialized per stream and their chunks are at most
+  ## `requestBodyChunkSize` bytes.
   ## WebSocket events are dispatched serially per connection. This means your
   ## WebSocket handler must return from a call before the next call will be
   ## dispatched for the same connection.
@@ -1630,9 +2246,11 @@ proc newServer*(
   result = cast[Server](allocShared0(sizeof(ServerObj)))
   result.handler = handler
   result.websocketHandler = websocketHandler
+  result.requestBodyHandler = requestBodyHandler
   result.maxHeadersLen = maxHeadersLen
   result.maxBodyLen = maxBodyLen
   result.maxMessageLen = maxMessageLen
+  result.requestBodyChunkSize = requestBodyChunkSize
   result.tcpNoDelay = tcpNoDelay
   result.rand = initRand()
 
@@ -1642,6 +2260,9 @@ proc newServer*(
   initCond(result.taskQueueCond)
   initLock(result.responseQueueLock)
   initLock(result.sendQueueLock)
+  initLock(result.requestBodyControlQueueLock)
+  initLock(result.requestBodies.lock)
+  initCond(result.requestBodies.cond)
   initLock(result.websocketQueuesLock)
 
   # Stuff that can fail
@@ -1653,6 +2274,8 @@ proc newServer*(
       result.responseQueuedInitialized = true
       result.sendQueued = newSelectEvent()
       result.sendQueuedInitialized = true
+      result.requestBodyControlQueued = newSelectEvent()
+      result.requestBodyControlQueuedInitialized = true
       result.shutdown = newSelectEvent()
       result.shutdownInitialized = true
 
@@ -1665,6 +2288,13 @@ proc newServer*(
       let sendQueuedData = DataEntry(kind: EventEntry)
       sendQueuedData.event = result.sendQueued
       result.selector.registerEvent(result.sendQueued, sendQueuedData)
+
+      let requestBodyControlQueuedData = DataEntry(kind: EventEntry)
+      requestBodyControlQueuedData.event = result.requestBodyControlQueued
+      result.selector.registerEvent(
+        result.requestBodyControlQueued,
+        requestBodyControlQueuedData
+      )
 
       let shutdownData = DataEntry(kind: EventEntry)
       shutdownData.event = result.shutdown

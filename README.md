@@ -5,6 +5,7 @@ Fork of original Mummy with goal of maintaining it while adding missing features
 ## Additional Features 
 
 - Bind multiple IP addresses and ports, including IPv6.
+- Stream incoming request bodies with bounded memory and backpressure.
 
 ## Details 
 
@@ -84,9 +85,7 @@ I see no reason why Websockets should not work exceptionally well right out of t
 
 Everything comes with trade-offs. Mummy is focused on being an exceptional API server. Think REST, JSON, RPC, WebSockets, HTML from templates etc.
 
-The property these share in common is they are all relatively memory-light. Most things are, which is great, but if you're specifically going to be serving a lot of very large files or expect large file uploads, Mummy is probably not the best choice unless your server has the RAM to handle the large files.
-
-Why is Mummy not great for large files? This is because Mummy dispatches fully received in-memory requests to worker threads and sends in-memory responses. This is great for everything except very large files.
+The property these share in common is they are all relatively memory-light. Most things are, which is great, but serving large response bodies still requires enough RAM for those responses. Incoming bodies can either use Mummy's traditional in-memory buffering or the streaming request-body API described below.
 
 ## Example HTTP server
 
@@ -118,6 +117,36 @@ server.serve([
   ("127.0.0.1", Port(9090))
 ])
 ```
+
+## Streaming uploads
+
+Existing applications keep the traditional behavior: Mummy buffers each body
+and calls the ordinary request handler with `request.body`. To opt in to
+bounded-memory uploads, pass a `requestBodyHandler` to `newServer` and call
+`stream.accept()` during `RequestBodyOpen` for the requests you want to stream.
+
+Accepted bodies arrive as dechunked `RequestBodyChunk` events, one at a time.
+Returning from a chunk event allows Mummy to read the next chunk, providing
+backpressure. Finish and cleanup work belongs in `RequestBodyEnd` and
+`RequestBodyError`, respectively. Call `stream.buffer()`—or make no decision—to
+retain the ordinary `request.body` behavior for a request. `stream.reject()`
+sends an error response and closes the connection without reading the rest of
+the body.
+
+`maxBodyLen` remains the total decoded-body limit, while
+`requestBodyChunkSize` bounds each delivered chunk. The
+[`basic_upload.nim`](examples/basic_upload.nim) example writes a direct `PUT`
+upload to disk:
+
+```sh
+nim c --threads:on --mm:orc --path:src -r examples/basic_upload.nim
+curl --data-binary @my-file.bin -X PUT http://localhost:8080/upload
+```
+
+This is a generic request-body primitive rather than a multipart-only API, so
+it can also feed object storage, hashing, decompression, parsers, or other
+application-defined sinks. A higher-level temporary-file sink can be layered on
+top without changing the core API.
 
 ## Logging
 

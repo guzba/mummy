@@ -39,6 +39,7 @@ jobs:
 
     - run: nim c -r -d:useMalloc tests/test.nim
     - run: nim c -r -d:useMalloc tests/test_http.nim
+    - run: nim c -r -d:useMalloc tests/test_request_body_streams.nim
     - run: nim c --mm:atomicArc -r -d:useMalloc tests/test_http.nim
       if: ${{ matrix.atomic_arc }}
     - run: nim c -r -d:useMalloc tests/test_http2.nim
